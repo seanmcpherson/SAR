@@ -29,6 +29,7 @@ import inspect
 import os
 import itertools
 import logging
+import numpy as np
 from collections.abc import MutableMapping
 from contextlib import contextmanager
 import torch
@@ -194,6 +195,7 @@ class GraphShardManager:
     def __init__(self, graph_shards: List[GraphShard], local_src_seeds: Tensor, local_tgt_seeds: Tensor) -> None:
         super().__init__()
         self.graph_shards = graph_shards
+        self.pointer_list = []
 
         assert all(self.tgt_node_range ==
                    x.tgt_range for x in self.graph_shards[1:])
@@ -496,6 +498,40 @@ class GraphShardManager:
         assert isinstance(reduce_func, dgl.function.reducer.SimpleReduceFunction), \
             'only simple reduce functions: sum, min, max, and mean are supported'
 
+        
+        import ipdb; ipdb.set_trace()
+
+        for idx, tens in enumerate(self.pointer_list):
+            print("idx: {} - func: {}".format(idx, tens._func))
+
+        for idx, tens in enumerate(self.pointer_list):
+            try:
+                fname = "rank{}_tensor{}.pt".format(rank(), idx)
+                if idx == 7:
+                    import ipdb; ipdb.set_trace()
+                torch.save(torch.Tensor(tens), fname)                
+                tens.resize_(0)
+            except RuntimeError as e:
+                tens.storage().resize_(0)
+               
+        import ipdb; ipdb.set_trace()
+        for idx, tens in enumerate(self.pointer_list):
+            fname = "rank{}_tensor{}.pt".format(rank(), idx)
+            try:
+                tmp_tens = torch.load(fname)
+            except:
+                import ipdb; ipdb.set_trace()
+            try: 
+                tens.resize_(tmp_tens.size())
+            except:
+                try:
+                    tens.storage().resize_(int(np.prod(tmp_tens.size())))
+                except: 
+                    import ipdb; ipdb.set_trace()
+            tens.copy_(tmp_tens)
+               
+        import ipdb; ipdb.set_trace()
+        
         if reduce_func.name == 'mean':
             reduce_func = fn.sum(reduce_func.msg_field,  # pylint: disable=no-member
                                  reduce_func.out_field)
@@ -514,7 +550,7 @@ class GraphShardManager:
                                            n_params,
                                            torch.is_grad_enabled(),
                                            remote_data)
-
+        import ipdb; ipdb.set_trace()
         result_val = sar_op(aggregation_data, *all_input_tensors)
         if mean_postprocess:
             in_degrees = self.in_degrees()

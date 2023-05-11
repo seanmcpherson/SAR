@@ -24,6 +24,7 @@ for doing collective communications
 '''
 
 from typing import ClassVar, List, cast, Optional, Callable, Any
+import functools
 import queue
 import threading
 import logging
@@ -131,6 +132,42 @@ def nfs_ip_init(_rank: int, ip_file: str) -> str:
     else:
         master_ip = get_ip_address(ip_file)
     return master_ip
+
+def single_node_init_comms(f):
+    @functools.wraps(f)
+    def check_if_single_node(*args, **kwargs):
+        print("args: {}".format(args))
+        print("kwargs: {}".format(kwargs))
+        return f(*args, **kwargs)
+    return check_if_single_node
+
+def initialize_single_node(_rank: int, _world_size: int, master_ip_address: str,
+                           _comm_device: torch.device):
+    """
+    Initialize Pytorch's communication library
+
+    :param _rank: Rank of the current worker
+    :type _rank: int
+    :param _world_size: Number of workers. The same as the number of graph partitions
+    :type _world_size: int
+    :param master_ip_address: IP address of the master worker (worker with rank 0)
+    :type master_ip_address: str
+    :param _comm_device:  The device on which the tensors should be on in order to transmit them\
+    through the backend. If not provided, the device is infered based on the backend type
+    :type _comm_device: torch.device
+    
+
+    """
+    
+    _CommData.rank = _rank
+    _CommData.world_size = _world_size
+    _CommData.comm_device = _comm_device
+    _CommData.comm_initialized = True
+    _CommData.master_ip = master_ip_address
+    _CommData.master_port = -1
+    _CommData.backend = None
+
+    logger.info('single node initialized')
 
 
 def initialize_comms(_rank: int, _world_size: int, master_ip_address: str,
@@ -472,7 +509,6 @@ def gather_grads(model: torch.nn.Module):
             all_reduce(param.grad, op=dist.ReduceOp.SUM,
                        move_to_comm_device=True)
 
-
 class CommThread:
     '''
     A general worker thread
@@ -509,6 +545,39 @@ class CommThread:
             result = task()
             if result is not None:
                 self.result_queue.put(result)
+
+
+class CallbackCommThread(CommThread):
+
+    def __init__(self) -> None:
+        self.callback_queue: queue.Queue = queue.Queue()
+        self.process_callbacks = False
+
+        super(self).__init__()
+    
+    def submit_callback(self, callback_id: str, callback: Callable[[], Any]) -> None:
+        '''
+        Submit a callback in the form of a callable with no arguments.
+        '''
+        logger.debug('callback submitted %s', callback_id)
+        self.callback_queue.put((callback_id, callback))
+
+    def _fetch_tasks(self) -> None:
+        while True:
+            if self.process_callbacks is False: 
+                '''
+                Process tasks
+                '''
+                _, task = self.task_queue.get()
+                task()
+            else:
+                '''
+                Process callbacks
+                '''
+                _, callback = self.callback_queue.get()
+                result = callback()
+                if result is not None:
+                    self.result_queue.put(result)
 
 
 comm_thread = CommThread()

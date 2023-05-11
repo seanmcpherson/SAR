@@ -23,7 +23,7 @@
 Top-level SAR package
 '''
 
-from .comm import initialize_comms, rank, world_size, comm_device,\
+from .comm import initialize_comms, initialize_single_node, rank, world_size, comm_device,\
     nfs_ip_init, sync_params, gather_grads
 from .core import GraphShardManager, message_has_parameters, DistributedBlock,\
     DistNeighborSampler, DataLoader
