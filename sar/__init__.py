@@ -26,7 +26,7 @@ Top-level SAR package
 from .comm import initialize_comms, rank, world_size, comm_device,\
     nfs_ip_init, sync_params, gather_grads
 from .core import GraphShardManager, message_has_parameters, DistributedBlock,\
-    DistNeighborSampler, DataLoader
+    DistNeighborSampler, DataLoader, start_comm_thread
 from .construct_shard_manager import construct_mfgs, construct_full_graph
 from .data_loading import load_dgl_partition_data, suffix_key_lookup
 from .distributed_bn import DistributedBN1D

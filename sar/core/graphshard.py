@@ -191,9 +191,16 @@ class GraphShardManager:
 
     """
 
-    def __init__(self, graph_shards: List[GraphShard], local_src_seeds: Tensor, local_tgt_seeds: Tensor) -> None:
+    def __init__(self, graph_shards: List[GraphShard], local_src_seeds: Tensor, local_tgt_seeds: Tensor, lock = None) -> None:
         super().__init__()
         self.graph_shards = graph_shards
+        self.set_lock(lock)
+        if lock is None:
+            self.resume_process = None
+            self.pause_process = None
+        else:
+            self.resume_process = self._resume_process
+            self.pause_process = self._pause_process
 
         assert all(self.tgt_node_range ==
                    x.tgt_range for x in self.graph_shards[1:])
@@ -283,11 +290,31 @@ class GraphShardManager:
         self._sampling_graph = sampling_graph
         return sampling_graph
 
+    def get_lock(self):
+        return self._lock
+    def set_lock(self, lock):
+        self._lock = lock
+    def acquire_lock(self):
+        self._lock.acquire()
+        logger.debug("Node {} Lock Acquired".format(rank()))
+    def release_lock(self):
+        self._lock.release()
+        logger.debug("Node {} Lock Released".format(rank()))
+    
+    def _pause_process(self):
+        logger.debug("Node {} pause_process called".format(rank()))
+        self.release_lock()
+    def _resume_process(self, handle = None):
+        logger.debug("Node {} resume_process called".format(rank()))
+        if handle:
+            handle.wait()
+        self.acquire_lock()
+
     def update_boundary_nodes_indices(self) -> List[Tensor]:
         all_my_sources_indices = [
             x.unique_src_nodes for x in self.graph_shards]
-
-        indices_required_from_me = exchange_tensors(all_my_sources_indices)
+        indices_required_from_me = exchange_tensors(all_my_sources_indices, 
+                                                    precall_func = self.pause_process, callback_func = self.resume_process)
         for ind in indices_required_from_me:
             ind.sub_(self.tgt_node_range[0])
         return indices_required_from_me
@@ -495,6 +522,8 @@ class GraphShardManager:
 
         assert isinstance(reduce_func, dgl.function.reducer.SimpleReduceFunction), \
             'only simple reduce functions: sum, min, max, and mean are supported'
+
+        logger.debug('in update_all')
 
         if reduce_func.name == 'mean':
             reduce_func = fn.sum(reduce_func.msg_field,  # pylint: disable=no-member
