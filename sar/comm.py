@@ -291,7 +291,6 @@ def all_to_all(recv_tensors: List[torch.Tensor], send_tensors: List[torch.Tensor
         all_to_all_rounds(recv_tensors, send_tensors, 
                           precall_func = precall_func, callback_func = callback_func)
 
-
 def all_reduce(red_tensor: torch.Tensor, op: dist.ReduceOp,
                move_to_comm_device: bool = False, precall_func = None, 
                callback_func = None):   # pylint: disable=invalid-name
@@ -324,7 +323,7 @@ def all_reduce(red_tensor: torch.Tensor, op: dist.ReduceOp,
             callback_func(handle)
         else:
             handle.wait()
-        
+
 def all_to_all_rounds(recv_tensors: List[torch.Tensor], send_tensors: List[torch.Tensor], 
                       precall_func = None, callback_func = None):
     if Config.max_collective_size == 0:

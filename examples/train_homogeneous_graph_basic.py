@@ -31,6 +31,7 @@ import dgl  # type: ignore
 
 import sar
 
+from memory_profiler import profile
 
 parser = ArgumentParser(
     description="GNN training on node classification tasks in homogeneous graphs")
@@ -127,13 +128,18 @@ class PartitionDataManager:
 
     @property
     def features(self):
-        if self._features is None:
-            raise ValueError("features not set")
+        #if self._features is None:
+        #    raise ValueError("features not set")
         return self._features
     
     @features.setter
     def features(self, feats):
         self._features = feats
+
+    @features.deleter
+    def features(self):
+        del self._features
+        self._features = None
 
     @property
     def labels(self):
@@ -158,17 +164,23 @@ class PartitionDataManager:
     def save(self):
         if not os.path.exists(self.folder_name):
             os.makedirs(self.folder_name)
-        if not self._features is None:
-            torch.save(self._features, os.path.join(self.folder_name, "features.pt"))
-        if not self._masks is None:
+        #if self._features is not None:
+        #    torch.save(self._features, os.path.join(self.folder_name, "features.pt"))
+        if self._masks is not None:
             torch.save(self._masks, os.path.join(self.folder_name, "masks.pt"))
-        if not self._labels is None:
+        if self._labels is not None:
             torch.save(self._labels, os.path.join(self.folder_name, "labels.pt"))
-        if not self._partition_data is None:
+        if self._partition_data is not None:
             torch.save(self._partition_data, os.path.join(self.folder_name, "partition_data.pt"))
 
+    def save_tensor(self, tensor, tensor_name):
+        if not os.path.exists(self.folder_name):
+            os.makedirs(self.folder_name)
+        if tensor is not None:
+            torch.save(tensor, os.path.join(self.folder_name, tensor_name + ".pt"))
+
     def delete(self):
-        del self._features
+        #del self._features
         del self._masks
         del self._labels
         del self._partition_data
@@ -176,11 +188,10 @@ class PartitionDataManager:
     def load(self):
         if not os.path.exists(self.folder_name):
             raise FileNotFoundError("No partition data saved")
-            return
-        if os.path.exists(os.path.join(self.folder_name, "features.pt")):
-            self._features = torch.load(os.path.join(self.folder_name, "features.pt"))
-        else:
-            print("features not loaded, no file saved")
+        #if os.path.exists(os.path.join(self.folder_name, "features.pt")):
+        #    self._features = torch.load(os.path.join(self.folder_name, "features.pt"))
+        #else:
+        #    print("features not loaded, no file saved")
         if os.path.exists(os.path.join(self.folder_name, "masks.pt")):
             self._masks = torch.load(os.path.join(self.folder_name, "masks.pt"))
         else:
@@ -194,32 +205,13 @@ class PartitionDataManager:
         else:
             print("partition_data not loaded, no file saved")
 
-class PartitionThreadManager:
-    
-    def __init__(self, num_partitions):
-        self.num_partitions = num_partitions
-    
-    def pause_thread(self):
-        '''
-        for pointer in self.pointer_list:  
-            torch.save(pointer, p_name)
-            pointer.resize_(0)
-        
-        graph_shard_manager.save()
-        barrier.wait()
-        self.resume_thread()
-        '''
-        pass
-    
-    def resume_thread(self):
-        '''
-        for pointer in self.pointer_list:
-            t = torch.load(p_name)
-            pointer.resize_(t.size())
-        
-        graph_shard_manager.load()
-        '''
-        pass
+    def load_tensor(self, tensor_name):
+        if not os.path.exists(self.folder_name):
+            raise FileNotFoundError("No partition data saved")
+        if os.path.exists(os.path.join(self.folder_name, tensor_name + ".pt")):
+            return torch.load(os.path.join(self.folder_name, tensor_name + ".pt"))
+        else: 
+            return None
 
 
 def main():
@@ -238,9 +230,6 @@ def run(args, rank, lock, barrier):
     print('args', args)
     print('rank', rank)
 
-    #lock.acquire()
-    #print("Node {} Lock Acquired".format(rank))
-
     use_gpu = torch.cuda.is_available() and not args.cpu_run
     device = torch.device('cuda' if use_gpu else 'cpu')
 
@@ -252,14 +241,10 @@ def run(args, rank, lock, barrier):
 
     # Obtain the ip address of the master through the network file system
     master_ip_address = sar.nfs_ip_init(rank, args.ip_file)
-    #lock.release()
-    #print("Node {} Lock Released".format(rank))    
     sar.initialize_comms(rank,
                          args.world_size, master_ip_address,
                          args.backend)
 
-    #barrier.wait()
-    #print("Node {} Barrier Passed".format(rank))
     lock.acquire()
     print("Node {} Lock Acquired".format(rank))
 
@@ -291,6 +276,9 @@ def run(args, rank, lock, barrier):
     
     def precall_func():
         partition_data_manager.save()
+        if isinstance(partition_data_manager.features, torch.Tensor): 
+            partition_data_manager.save_tensor(partition_data_manager.features, 'features')
+            del partition_data_manager.features
         partition_data_manager.delete()
         lock.release()
         print("Node {} Lock Released".format(rank))
@@ -300,6 +288,9 @@ def run(args, rank, lock, barrier):
         lock.acquire()
         print("Node {} Lock Acquired".format(rank))
         partition_data_manager.load()
+        features = partition_data_manager.load_tensor('features')
+        if features is not None:
+            partition_data_manager.features = features
 
     
     sar.comm.all_reduce(num_labels, dist.ReduceOp.MAX, move_to_comm_device=True, 
@@ -309,11 +300,7 @@ def run(args, rank, lock, barrier):
     num_labels = num_labels.item() 
     
     partition_data_manager.features = sar.suffix_key_lookup(partition_data_manager.partition_data.node_features, 'features').to(device)
-    full_graph_manager = sar.construct_full_graph(partition_data_manager.partition_data, lock=lock).to(device)
     
-    #We do not need the partition data anymore
-    del partition_data_manager.partition_data
-    partition_data_manager.partition_data = None
     
     gnn_model = GNNModel(partition_data_manager.features.size(1),
                          args.hidden_layer_dim,
@@ -331,9 +318,19 @@ def run(args, rank, lock, barrier):
                         precall_func=precall_func, callback_func=callback_func)
     n_train_points = n_train_points.item()
 
+    full_graph_manager = sar.construct_full_graph(partition_data_manager.partition_data, 
+                                                  partition_data_manager=partition_data_manager, lock=lock).to(device)
+    
+    #We do not need the partition data anymore
+    del partition_data_manager.partition_data
+    partition_data_manager.partition_data = None
+    
+    #full_graph_manager.partition_data_manager = partition_data_manager
+
     optimizer = torch.optim.Adam(gnn_model.parameters(), lr=args.lr)
     for train_iter_idx in range(args.train_iters):
         logger.debug(f'{rank} : starting training iteration {train_iter_idx}')
+        partition_data_manager.features = sar.PointerTensor(partition_data_manager.features, pointer=full_graph_manager.pointer_list)
         # Train
         t_1 = time.time()
         logits = gnn_model(full_graph_manager, partition_data_manager.features)
@@ -347,6 +344,8 @@ def run(args, rank, lock, barrier):
         sar.gather_grads(gnn_model, 
                          precall_func=full_graph_manager.pause_process, callback_func=full_graph_manager.resume_process)
         optimizer.step()
+
+
         train_time = time.time() - t_1
 
         # Calculate accuracy for train/validation/test
@@ -369,15 +368,20 @@ def run(args, rank, lock, barrier):
             f"iteration [{train_iter_idx + 1}/{args.train_iters}] | "
         )
         result_message += ', '.join([
-            f"train loss={loss:.4f}, "
+            f"train loss={loss}, "
             f"Accuracy: "
-            f"train={train_acc:.4f} "
-            f"valid={val_acc:.4f} "
-            f"test={test_acc:.4f} "
+            f"train={train_acc} "
+            f"valid={val_acc} "
+            f"test={test_acc} "
             f" | train time = {train_time} "
             f" |"
         ])
         print(result_message, flush=True)
+        print("Pointer List Length: {}".format(len(full_graph_manager.pointer_list)))
+        full_graph_manager.pointer_list = []
+
+        full_graph_manager.print_metrics()
+        
     lock.release()
 
 if __name__ == '__main__':

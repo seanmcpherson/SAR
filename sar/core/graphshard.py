@@ -26,7 +26,7 @@ in a single worker)
 
 from typing import Tuple, Dict, List,  Optional
 import inspect
-import os
+import os, gc, sys
 import itertools
 import logging
 from collections.abc import MutableMapping
@@ -39,6 +39,8 @@ import dgl.function as fn  # type: ignore
 from torch import Tensor
 import torch.distributed as dist
 
+#from memory_profiler import profile
+import psutil
 
 from ..common_tuples import ShardEdgesAndFeatures, AggregationData, TensorPlace, ShardInfo
 from ..comm import exchange_tensors,  rank, all_reduce
@@ -49,6 +51,56 @@ logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 logger.setLevel(logging.DEBUG)
 
+import inspect
+def get_size(obj, seen=None):
+    """Recursively finds size of objects in bytes"""
+    size = sys.getsizeof(obj)
+    if seen is None:
+        seen = set()
+    obj_id = id(obj)
+    if obj_id in seen:
+        return 0
+    # Important mark as seen *before* entering recursion to gracefully handle
+    # self-referential objects
+    seen.add(obj_id)
+    if hasattr(obj, '__dict__'):
+        for cls in obj.__class__.__mro__:
+            if '__dict__' in cls.__dict__:
+                d = cls.__dict__['__dict__']
+                if inspect.isgetsetdescriptor(d) or inspect.ismemberdescriptor(d):
+                    size += get_size(obj.__dict__, seen)
+                break
+    if isinstance(obj, dict):
+        size += sum((get_size(v, seen) for v in obj.values()))
+        size += sum((get_size(k, seen) for k in obj.keys()))
+    elif isinstance(obj, torch.Tensor):
+        size += obj.size(dim=0)
+    elif hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes, bytearray)):
+        try:
+            size += sum((get_size(i, seen) for i in obj))
+        except TypeError:
+            logging.exception("Unable to get size of %r. This may lead to incorrect sizes. Please report this error.", obj)
+    if hasattr(obj, '__slots__'): # can have __slots__ with __dict__
+        size += sum(get_size(getattr(obj, s), seen) for s in obj.__slots__ if hasattr(obj, s))
+        
+    return size
+
+
+def bytes2human(n):
+    # http://code.activestate.com/recipes/578019
+    # >>> bytes2human(10000)
+    # '9.8K'
+    # >>> bytes2human(100001221)
+    # '95.4M'
+    symbols = ('K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y')
+    prefix = {}
+    for i, s in enumerate(symbols):
+        prefix[s] = 1 << (i + 1) * 10
+    for s in reversed(symbols):
+        if abs(n) >= prefix[s]:
+            value = float(n) / prefix[s]
+            return '%.1f%s' % (value, s)
+    return "%sB" % n
 
 class GraphShard:
     """
@@ -191,9 +243,11 @@ class GraphShardManager:
 
     """
 
-    def __init__(self, graph_shards: List[GraphShard], local_src_seeds: Tensor, local_tgt_seeds: Tensor, lock = None) -> None:
+    def __init__(self, graph_shards: List[GraphShard], local_src_seeds: Tensor, local_tgt_seeds: Tensor, 
+                 partition_data_manager=None, lock = None) -> None:
         super().__init__()
         self.graph_shards = graph_shards
+        self.pointer_list = []
         self.set_lock(lock)
         if lock is None:
             self.resume_process = None
@@ -201,6 +255,8 @@ class GraphShardManager:
         else:
             self.resume_process = self._resume_process
             self.pause_process = self._pause_process
+        self.partition_data_manager = partition_data_manager
+        self.metric_dict = None
 
         assert all(self.tgt_node_range ==
                    x.tgt_range for x in self.graph_shards[1:])
@@ -290,6 +346,18 @@ class GraphShardManager:
         self._sampling_graph = sampling_graph
         return sampling_graph
 
+    @property
+    def partition_data_manager(self):
+        try: 
+            partition_data_manager = self._partition_data_manager
+            return partition_data_manager
+        except:
+            raise ValueError("partition_data_manager not set")
+    
+    @partition_data_manager.setter
+    def partition_data_manager(self, partition_data_manager):
+        self._partition_data_manager = partition_data_manager
+
     def get_lock(self):
         return self._lock
     def set_lock(self, lock):
@@ -303,12 +371,155 @@ class GraphShardManager:
     
     def _pause_process(self):
         logger.debug("Node {} pause_process called".format(rank()))
+        p = psutil.Process()
+        if self.partition_data_manager:
+            if self.metric_dict is None:
+                self.metric_dict = {'pre-pause': list(), 
+                                    'post-pause': list(), 
+                                    'pre-resume': list(), 
+                                    'post-resume': list()}
+            self.metric_dict['pre-pause'].append(p.memory_full_info().uss)
+            self.partition_data_manager.save()
+            self.partition_data_manager.delete()
+            try:
+                #TODO fix this so the first exception doesn't stop saving everything else.
+                #only delete if successfully saved
+                self.partition_data_manager.save_tensor(self.dstdata, 'dstdata')
+                del self.dstdata
+                self.partition_data_manager.save_tensor(self.srcdata, 'srcdata')
+                del self.srcdata
+                self.partition_data_manager.save_tensor(self.edata, 'edata')
+                del self.edata
+                self.partition_data_manager.save_tensor(self.graph_shards, 'graph_shards')
+                del self.graph_shards
+                self.partition_data_manager.save_tensor(self.input_nodes, 'input_nodes')
+                del self.input_nodes
+                self.partition_data_manager.save_tensor(self.seeds, 'seeds')
+                del self.seeds
+                self.partition_data_manager.save_tensor(self.indices_required_from_me, 'indicies_required_from_me')
+                del self.indices_required_from_me
+            except Exception as e: 
+                logger.debug("_pause_process Exception: {}".format(e))
+
+            for idx, tens in enumerate(self.pointer_list):
+                try:
+                    fname = "rank{}_tensor{}.pt".format(rank(), idx)
+                    self.partition_data_manager.save_tensor(tens, fname)                
+                    tens.resize_(0)
+                    logger.info("pointer tensor idx: {} saved with .resize_".format(idx))
+                except RuntimeError as e:
+                    # TODO check with tens error to here. 
+                    logger.info("pointer tensor idx: {} saved with storage().resize_".format(idx))
+                    import ipdb
+                    _stdin = sys.stdin
+                    try:
+                        sys.stdin = open('/dev/stdin')
+                        ipdb.set_trace()
+                    finally:
+                        sys.stdin = _stdin
+                    tens.storage().resize_(0)
+                    
+        gc.collect()
+        if self.metric_dict:
+            self.metric_dict['post-pause'].append(p.memory_full_info().uss)
         self.release_lock()
+    
     def _resume_process(self, handle = None):
         logger.debug("Node {} resume_process called".format(rank()))
         if handle:
             handle.wait()
         self.acquire_lock()
+        p = psutil.Process()
+        if self.metric_dict:
+            self.metric_dict['pre-resume'].append(p.memory_full_info().uss)
+        if self.partition_data_manager:
+            self.partition_data_manager.load()
+            try:
+                #only reset member variable if successfully loaded.
+                dstdata = self.partition_data_manager.load_tensor('dstdata')
+                if dstdata is not None:
+                    self.dstdata = dstdata
+                srcdata = self.partition_data_manager.load_tensor('srcdata')
+                if srcdata is not None:
+                    self.srcdata = srcdata
+                edata = self.partition_data_manager.load_tensor('edata')
+                if edata is not None: 
+                    self.edata = edata
+                graph_shards = self.partition_data_manager.load_tensor('graph_shards')
+                if graph_shards is not None:
+                    self.graph_shards = graph_shards
+                input_nodes = self.partition_data_manager.load_tensor('input_nodes')
+                if input_nodes is not None:
+                    self.input_nodes = input_nodes
+                seeds = self.partition_data_manager.load_tensor('seeds')
+                if seeds is not None:
+                    self.seeds = seeds
+                indices_required_from_me = self.partition_data_manager.load_tensor('indicies_required_from_me')
+                if indices_required_from_me is not None:
+                    self.indices_required_from_me = indices_required_from_me
+            except Exception as e: 
+                logger.debug("_resume_process Exception: {}".format(e))
+            for idx, tens in enumerate(self.pointer_list):
+                fname = "rank{}_tensor{}.pt".format(rank(), idx)
+                try:
+                    tmp_tens = self.partition_data_manager.load_tensor(fname)
+                except:
+                    try:
+                        del tmp_tens
+                        tmp_tens = self.partition_data_manager.load_tensor(fname)
+                    except Exception as e:
+                        logger.info("Exception: {}".format(e))
+                        import ipdb
+                        _stdin = sys.stdin
+                        try:
+                            sys.stdin = open('/dev/stdin')
+                            ipdb.set_trace()
+                        finally:
+                            sys.stdin = _stdin
+                try: 
+                    tens.resize_(tmp_tens.size())
+                except:
+                    import numpy as np
+                    try:
+                        tens.storage().resize_(int(np.prod(tmp_tens.size())))
+                    except Exception as e:
+                        logger.info("Exception: {}".format(e)) 
+                        logger.info("tmp_tens: {}".format(tmp_tens))
+                        logger.info("tmp_tens: {} - func: {} - id: {}".format(tmp_tens, tmp_tens._func, id(tmp_tens)))
+                        logger.info("tens: {} - func: {} - id: {}".format(tens, tens._func, id(tens)))
+                        
+                try:
+                    tens.copy_(tmp_tens)
+                except Exception as e:
+                        logger.info("Exception: {}".format(e)) 
+                        try:
+                            logger.info("tmp_tens: {} - func: {} - id: {}".format(tmp_tens, tmp_tens._func, id(tmp_tens)))
+                            logger.info("tens: {} - func: {} - id: {}".format(tens, tens._func, id(tens)))
+                
+                        except:
+                            import ipdb
+                            _stdin = sys.stdin
+                            try:
+                                sys.stdin = open('/dev/stdin')
+                                ipdb.set_trace()
+                                #ipdb.Pdb.interaction(self, *args, **kwargs)
+                            finally:
+                                sys.stdin = _stdin
+                
+        #logger.debug("Memory used post-resume: {}".format(p.memory_full_info()))
+        if self.metric_dict:
+            self.metric_dict['post-resume'].append(p.memory_full_info().uss)
+
+    def print_metrics(self):
+        if self.metric_dict:
+            for metric in ['pre-pause', 'post-pause', 'pre-resume', 'post-resume']:
+                logger.info("Avg. Memory {}: {}".format(metric, bytes2human(sum(self.metric_dict[metric])/len(self.metric_dict[metric]))))
+
+            avg_diff = sum([pre - post for pre, post in zip(self.metric_dict['pre-pause'], self.metric_dict['post-pause'])])/len(self.metric_dict['pre-pause'])
+            logger.info("Avg. Memory Diff pre/post pause: {}".format(bytes2human(avg_diff)))
+
+            avg_diff = sum([post - pre for pre, post in zip(self.metric_dict['pre-resume'], self.metric_dict['post-resume'])])/len(self.metric_dict['pre-resume'])
+            logger.info("Avg. Memory Diff pre/post resume: {}".format(bytes2human(avg_diff)))
 
     def update_boundary_nodes_indices(self) -> List[Tensor]:
         all_my_sources_indices = [
@@ -457,7 +668,7 @@ class GraphShardManager:
                 out_degrees[shard.unique_src_nodes - shard.src_range[0]
                             ] = shard.graph.out_degrees(etype=etype)
                 all_reduce(out_degrees, op=dist.ReduceOp.SUM,
-                           move_to_comm_device=True)
+                           move_to_comm_device=True, precall_func=self.pause_process, callback_func=self.resume_process)
                 if comm_round == rank():
                     out_degrees[out_degrees == 0] = 1
                     self.out_degrees_cache[etype] = out_degrees.to(
@@ -522,6 +733,10 @@ class GraphShardManager:
 
         assert isinstance(reduce_func, dgl.function.reducer.SimpleReduceFunction), \
             'only simple reduce functions: sum, min, max, and mean are supported'
+
+        #import ipdb; ipdb.set_trace()
+        #logger.info("update_all - Pointer List: {}".format(self.pointer_list))
+        #logger.info("update_all - Pointer: {}".format(self.pointer_list[0]._pointer))
 
         logger.debug('in update_all')
 
