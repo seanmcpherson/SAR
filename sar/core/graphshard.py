@@ -401,15 +401,21 @@ class GraphShardManager:
             except Exception as e: 
                 logger.debug("_pause_process Exception: {}".format(e))
 
+
+            
             for idx, tens in enumerate(self.pointer_list):
                 try:
                     fname = "rank{}_tensor{}.pt".format(rank(), idx)
-                    self.partition_data_manager.save_tensor(tens, fname)                
-                    tens.resize_(0)
-                    logger.info("pointer tensor idx: {} saved with .resize_".format(idx))
+                    if tens.requires_grad:
+                        tens_d = tens.detach()
+                        self.partition_data_manager.save_tensor(tens_d, fname)
+                        tens.storage().resize_(0)
+                    else:
+                        self.partition_data_manager.save_tensor(tens, fname)
+                        tens.resize_(0)
+                    
                 except RuntimeError as e:
                     # TODO check with tens error to here. 
-                    logger.info("pointer tensor idx: {} saved with storage().resize_".format(idx))
                     import ipdb
                     _stdin = sys.stdin
                     try:
@@ -417,8 +423,7 @@ class GraphShardManager:
                         ipdb.set_trace()
                     finally:
                         sys.stdin = _stdin
-                    tens.storage().resize_(0)
-                    
+                                    
         gc.collect()
         if self.metric_dict:
             self.metric_dict['post-pause'].append(p.memory_full_info().uss)
@@ -463,48 +468,22 @@ class GraphShardManager:
                 fname = "rank{}_tensor{}.pt".format(rank(), idx)
                 try:
                     tmp_tens = self.partition_data_manager.load_tensor(fname)
-                except:
-                    try:
-                        del tmp_tens
-                        tmp_tens = self.partition_data_manager.load_tensor(fname)
-                    except Exception as e:
-                        logger.info("Exception: {}".format(e))
-                        import ipdb
-                        _stdin = sys.stdin
-                        try:
-                            sys.stdin = open('/dev/stdin')
-                            ipdb.set_trace()
-                        finally:
-                            sys.stdin = _stdin
-                try: 
-                    tens.resize_(tmp_tens.size())
-                except:
-                    import numpy as np
-                    try:
-                        tens.storage().resize_(int(np.prod(tmp_tens.size())))
-                    except Exception as e:
-                        logger.info("Exception: {}".format(e)) 
-                        logger.info("tmp_tens: {}".format(tmp_tens))
-                        logger.info("tmp_tens: {} - func: {} - id: {}".format(tmp_tens, tmp_tens._func, id(tmp_tens)))
-                        logger.info("tens: {} - func: {} - id: {}".format(tens, tens._func, id(tens)))
-                        
-                try:
-                    tens.copy_(tmp_tens)
+                    if tens.requires_grad:
+                        import numpy as np
+                        tens.storage().resize_(int(np.prod(tens.size())))
+                        #tens.set_(tmp_tens)
+                    else:
+                        tens.resize_(tens.size())    
+                    tens.set_(tmp_tens)
                 except Exception as e:
-                        logger.info("Exception: {}".format(e)) 
-                        try:
-                            logger.info("tmp_tens: {} - func: {} - id: {}".format(tmp_tens, tmp_tens._func, id(tmp_tens)))
-                            logger.info("tens: {} - func: {} - id: {}".format(tens, tens._func, id(tens)))
-                
-                        except:
-                            import ipdb
-                            _stdin = sys.stdin
-                            try:
-                                sys.stdin = open('/dev/stdin')
-                                ipdb.set_trace()
-                                #ipdb.Pdb.interaction(self, *args, **kwargs)
-                            finally:
-                                sys.stdin = _stdin
+                    logger.info("Exception: {}".format(e))
+                    import ipdb
+                    _stdin = sys.stdin
+                    try:
+                        sys.stdin = open('/dev/stdin')
+                        ipdb.set_trace()
+                    finally:
+                        sys.stdin = _stdin
                 
         #logger.debug("Memory used post-resume: {}".format(p.memory_full_info()))
         if self.metric_dict:

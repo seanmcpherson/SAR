@@ -3,7 +3,10 @@ import torch
 INPLACE_FUNCTIONS = [
     torch.Tensor.resize_,
     torch.Tensor.copy_,
-    torch.Tensor.storage
+    torch.Tensor.storage, 
+    torch.Tensor.detach, 
+    torch.Tensor.set_, 
+    torch.Tensor.requires_grad 
 ]
 
 class PointerTensor(torch.Tensor):
