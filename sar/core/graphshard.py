@@ -248,6 +248,7 @@ class GraphShardManager:
         super().__init__()
         self.graph_shards = graph_shards
         self.pointer_list = []
+        self.linked_list = []
         self.set_lock(lock)
         if lock is None:
             self.resume_process = None
@@ -404,12 +405,26 @@ class GraphShardManager:
 
             
             for idx, tens in enumerate(self.pointer_list):
+                #if idx >=4:
+                '''
+                import ipdb
+                _stdin = sys.stdin
+                try:
+                    sys.stdin = open('/dev/stdin')
+                    ipdb.set_trace()
+                finally:
+                    sys.stdin = _stdin
+                '''
+                logger.debug("presave tens version - {}".format(tens._version))
+                version = tens._version
                 try:
                     fname = "rank{}_tensor{}.pt".format(rank(), idx)
                     if tens.requires_grad:
                         tens_d = tens.detach()
                         self.partition_data_manager.save_tensor(tens_d, fname)
-                        tens.storage().resize_(0)
+                        with torch.no_grad():
+                            tens.set_()
+                        #tens.storage().resize_(0)
                     else:
                         self.partition_data_manager.save_tensor(tens, fname)
                         tens.resize_(0)
@@ -423,7 +438,8 @@ class GraphShardManager:
                         ipdb.set_trace()
                     finally:
                         sys.stdin = _stdin
-                                    
+                tens._version = version
+                logger.debug("post-save tens version - {}".format(tens._version))                    
         gc.collect()
         if self.metric_dict:
             self.metric_dict['post-pause'].append(p.memory_full_info().uss)
@@ -465,7 +481,9 @@ class GraphShardManager:
             except Exception as e: 
                 logger.debug("_resume_process Exception: {}".format(e))
             for idx, tens in enumerate(self.pointer_list):
+                logger.debug("preload tens version - {}".format(tens._version))
                 fname = "rank{}_tensor{}.pt".format(rank(), idx)
+                version = tens._version
                 try:
                     tmp_tens = self.partition_data_manager.load_tensor(fname)
                     if tens.requires_grad:
@@ -473,10 +491,29 @@ class GraphShardManager:
                         tens.storage().resize_(int(np.prod(tens.size())))
                         #tens.set_(tmp_tens)
                     else:
-                        tens.resize_(tens.size())    
-                    tens.set_(tmp_tens)
+                        tens.resize_(tens.size())   
+                    with torch.no_grad(): 
+                        tens.set_(tmp_tens)
                 except Exception as e:
                     logger.info("Exception: {}".format(e))
+                    import ipdb
+                    _stdin = sys.stdin
+                    try:
+                        sys.stdin = open('/dev/stdin')
+                        ipdb.set_trace()
+                    finally:
+                        sys.stdin = _stdin
+                tens._version = version
+                logger.debug("post-load tens version - {}".format(tens._version))
+            for ref_tens, linked_tens in self.linked_list:
+                try:
+                    with torch.no_grad():
+                        linked_tens.set_(ref_tens.storage(), 
+                                     storage_offset=linked_tens.storage_offset(), 
+                                     size=linked_tens.size(), 
+                                     stride=linked_tens.stride())
+                except Exception as e:
+
                     import ipdb
                     _stdin = sys.stdin
                     try:
