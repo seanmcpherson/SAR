@@ -416,7 +416,6 @@ class GraphShardManager:
                     sys.stdin = _stdin
                 '''
                 logger.debug("presave tens version - {}".format(tens._version))
-                version = tens._version
                 try:
                     fname = "rank{}_tensor{}.pt".format(rank(), idx)
                     if tens.requires_grad:
@@ -438,7 +437,6 @@ class GraphShardManager:
                         ipdb.set_trace()
                     finally:
                         sys.stdin = _stdin
-                tens._version = version
                 logger.debug("post-save tens version - {}".format(tens._version))                    
         gc.collect()
         if self.metric_dict:
@@ -483,7 +481,6 @@ class GraphShardManager:
             for idx, tens in enumerate(self.pointer_list):
                 logger.debug("preload tens version - {}".format(tens._version))
                 fname = "rank{}_tensor{}.pt".format(rank(), idx)
-                version = tens._version
                 try:
                     tmp_tens = self.partition_data_manager.load_tensor(fname)
                     if tens.requires_grad:
@@ -503,7 +500,6 @@ class GraphShardManager:
                         ipdb.set_trace()
                     finally:
                         sys.stdin = _stdin
-                tens._version = version
                 logger.debug("post-load tens version - {}".format(tens._version))
             for ref_tens, linked_tens in self.linked_list:
                 try:
