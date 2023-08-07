@@ -7,7 +7,8 @@ INPLACE_FUNCTIONS = [
     torch.Tensor.detach, 
     torch.Tensor.set_, 
     torch.Tensor.requires_grad, 
-    torch.Tensor.data_ptr 
+    torch.Tensor.data_ptr, 
+    torch.Tensor.new 
 ]
 
 class PointerTensor(torch.Tensor):
@@ -16,6 +17,7 @@ class PointerTensor(torch.Tensor):
         self._pointer = pointer
         self._linked = linked
         if base_tensor is not None:
+            #pass
             self._linked.append((base_tensor, self))
         else:
             self._pointer.append(self)

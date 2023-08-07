@@ -347,6 +347,10 @@ def run(args, rank, lock, barrier):
                          precall_func=full_graph_manager.pause_process, callback_func=full_graph_manager.resume_process)
         optimizer.step()
 
+        logits = torch.Tensor(logits)
+        partition_data_manager.features = torch.Tensor(partition_data_manager.features)
+        full_graph_manager.pointer_list = []
+        full_graph_manager.linked_list = []
 
         train_time = time.time() - t_1
 
@@ -379,9 +383,7 @@ def run(args, rank, lock, barrier):
             f" |"
         ])
         print(result_message, flush=True)
-        print("Pointer List Length: {}".format(len(full_graph_manager.pointer_list)))
-        full_graph_manager.pointer_list = []
-
+        
         full_graph_manager.print_metrics()
         
     lock.release()
