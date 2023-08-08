@@ -185,7 +185,7 @@ def construct_mfgs(partition_data: PartitionData,
     return graph_shard_manager_list[::-1]
 
 
-def construct_full_graph(partition_data: PartitionData) -> GraphShardManager:
+def construct_full_graph(partition_data: PartitionData, partition_data_manager = None, lock = None) -> GraphShardManager:
     """
     Constructs a GraphShardManager object from the partition data. The GraphShardManager
     object can serve as a drop-in replacemet to DGL's native graph in most GNN layers
@@ -204,7 +204,8 @@ def construct_full_graph(partition_data: PartitionData) -> GraphShardManager:
     seed_nodes = torch.arange(partition_data.node_ranges[rank()][1] -
                               partition_data.node_ranges[rank()][0])
     return GraphShardManager(graph_shard_list,
-                             seed_nodes, seed_nodes)
+                             seed_nodes, seed_nodes, 
+                             partition_data_manager=partition_data_manager,lock=lock)
     
 def convert_dist_graph(dist_graph: dgl.distributed.DistGraph) -> GraphShardManager:
     partition_data = load_dgl_partition_data_from_graph(dist_graph, dist_graph.device)

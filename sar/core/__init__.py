@@ -22,7 +22,7 @@
 Modules for sharded data representation and management
 '''
 from .graphshard import GraphShard, GraphShardManager
-from .sar_aggregation import message_has_parameters
+from .sar_aggregation import message_has_parameters, start_comm_thread
 from .full_partition_block import DistributedBlock
 from .sampling import DistNeighborSampler, DataLoader
 

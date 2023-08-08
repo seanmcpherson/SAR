@@ -272,7 +272,7 @@ def comm_device() -> torch.device:
 
 
 def all_to_all(recv_tensors: List[torch.Tensor], send_tensors: List[torch.Tensor],
-               move_to_comm_device: bool = False) -> None:
+               move_to_comm_device: bool = False, precall_func = None, callback_func = None) -> None:
     '''
     wrapper around dist.all_to_all
     '''
@@ -280,21 +280,23 @@ def all_to_all(recv_tensors: List[torch.Tensor], send_tensors: List[torch.Tensor
                     == 0 else x for x in recv_tensors]
     send_tensors = [x.new(1, *x.size()[1:]) if x.numel()
                     == 0 else x for x in send_tensors]
-
+    
     if move_to_comm_device:
         recv_tensors_cd = [recv_tensor.to(comm_device())
                            for recv_tensor in recv_tensors]
         send_tensors_cd = [send_tensor.to(comm_device())
                            for send_tensor in send_tensors]
-        all_to_all_rounds(recv_tensors_cd, send_tensors_cd)
+        all_to_all_rounds(recv_tensors_cd, send_tensors_cd, 
+                          precall_func = precall_func, callback_func = callback_func)
         for recv_tensor, recv_tensor_cd in zip(recv_tensors, recv_tensors_cd):
             recv_tensor.copy_(recv_tensor_cd)
     else:
-        all_to_all_rounds(recv_tensors, send_tensors)
-
+        all_to_all_rounds(recv_tensors, send_tensors, 
+                          precall_func = precall_func, callback_func = callback_func)
 
 def all_reduce(red_tensor: torch.Tensor, op: dist.ReduceOp,
-               move_to_comm_device: bool = False):   # pylint: disable=invalid-name
+               move_to_comm_device: bool = False, precall_func = None, 
+               callback_func = None):   # pylint: disable=invalid-name
     """
     Wrapper around dist.all_reduce
 
@@ -305,16 +307,27 @@ def all_reduce(red_tensor: torch.Tensor, op: dist.ReduceOp,
     :param move_to_comm_device: Move to comm device or not
     :type move_to_comm_device: bool
     """
-
     if move_to_comm_device:
         red_tensor_cd = red_tensor.to(comm_device())
-        dist.all_reduce(red_tensor_cd, op)
+        if precall_func:
+            precall_func()
+        handle = dist.all_reduce(red_tensor_cd, op, async_op=True)
+        if callback_func: 
+            callback_func(handle)
+        else:
+            handle.wait()
         red_tensor.copy_(red_tensor_cd)
     else:
-        dist.all_reduce(red_tensor, op)
+        if precall_func:
+            precall_func()
+        handle = dist.all_reduce(red_tensor, op, async_op=True)
+        if callback_func: 
+            callback_func(handle)
+        else:
+            handle.wait()
 
-
-def all_to_all_rounds(recv_tensors: List[torch.Tensor], send_tensors: List[torch.Tensor]):
+def all_to_all_rounds(recv_tensors: List[torch.Tensor], send_tensors: List[torch.Tensor], 
+                      precall_func = None, callback_func = None):
     """
     All_to_all wrapper which breaks down the collective call into multiple
     torch.distributed.all_to_all calls so that the size of the data in each
@@ -326,13 +339,15 @@ def all_to_all_rounds(recv_tensors: List[torch.Tensor], send_tensors: List[torch
     :type send_tensors: List[torch.Tensor]
     """
     if Config.max_collective_size == 0:
-        all_to_all_gloo_support(recv_tensors, send_tensors)
+        all_to_all_gloo_support(recv_tensors, send_tensors, 
+                                precall_func=precall_func, callback_func=callback_func)
     else:
         max_n_elems = Config.max_collective_size
         total_elems = sum(r_tensor.numel() for r_tensor in recv_tensors) + \
             sum(s_tensor.numel() for s_tensor in send_tensors)
         n_rounds_t = torch.tensor(max(1, total_elems // max_n_elems))
-        all_reduce(n_rounds_t, dist.ReduceOp.MAX, move_to_comm_device=True)
+        all_reduce(n_rounds_t, dist.ReduceOp.MAX, move_to_comm_device=True, 
+                   precall_func=precall_func, callback_func=callback_func)
         n_rounds = int(n_rounds_t.item())
         logger.debug(f'all to all using {n_rounds}')
         for round_idx in range(n_rounds):
@@ -340,10 +355,12 @@ def all_to_all_rounds(recv_tensors: List[torch.Tensor], send_tensors: List[torch
                                    s_tensor in send_tensors]
             recv_tensors_slices = [_get_tensor_slice(r_tensor, n_rounds, round_idx) for
                                    r_tensor in recv_tensors]
-            all_to_all_gloo_support(recv_tensors_slices, send_tensors_slices)
+            all_to_all_gloo_support(recv_tensors_slices, send_tensors_slices, 
+                                    precall_func=precall_func, callback_func=callback_func)
 
 
-def all_to_all_gloo_support(recv_tensors: List[torch.Tensor], send_tensors: List[torch.Tensor]):
+def all_to_all_gloo_support(recv_tensors: List[torch.Tensor], send_tensors: List[torch.Tensor], 
+                           precall_func = None, callback_func = None):
     """
     Since gloo backend doesn't support all_to_all function, SAR implements it
     with multiple asynchronous sends (torch.dist.isend). For every other backend
@@ -367,8 +384,14 @@ def all_to_all_gloo_support(recv_tensors: List[torch.Tensor], send_tensors: List
                 dist.recv(recv_tensors[i], i)
         dist.barrier()
     else:
-        dist.all_to_all(recv_tensors, send_tensors)
-
+        if precall_func:
+            precall_func()
+        handle = dist.all_to_all(recv_tensors, send_tensors, async_op=True)
+        #print('all to all complete', recv_tensors, send_tensors, flush=True)
+        if callback_func:
+            callback_func(handle)
+        else:
+            handle.wait()
 
 def _get_tensor_slice(tens: Tensor, n_splits: int, split_idx: int) -> Tensor:
     chunk_size = max(1, tens.size(0) // n_splits)
@@ -383,7 +406,8 @@ def _get_tensor_slice(tens: Tensor, n_splits: int, split_idx: int) -> Tensor:
 
 
 def exchange_single_tensor(recv_idx: int, send_idx: int,
-                           recv_tensor: Tensor, send_tensor: Tensor) -> None:
+                           recv_tensor: Tensor, send_tensor: Tensor, 
+                           precall_func = None, callback_func = None) -> None:
     """    Sends send_tensor to worker send_idx and fills recv_tensor with data received
     from worker recv_idx. 
 
@@ -419,7 +443,8 @@ def exchange_single_tensor(recv_idx: int, send_idx: int,
         recv_tensors_list[recv_idx] = active_recv_tensor
         send_tensors_list[send_idx] = active_send_tensor
 
-        all_to_all(recv_tensors_list, send_tensors_list)
+        all_to_all(recv_tensors_list, send_tensors_list, 
+                   precall_func = precall_func, callback_func = callback_func)
 
         if active_recv_tensor is not recv_tensor and recv_tensor.size(0) > 0:
             recv_tensor.copy_(active_recv_tensor)
@@ -428,7 +453,8 @@ def exchange_single_tensor(recv_idx: int, send_idx: int,
         f'{rank()} : done exchange_single_tensor : {recv_idx}, {send_idx},{recv_tensor.size()},{send_tensor.size()}')
 
 
-def exchange_tensors(tensors: List[torch.Tensor], recv_sizes: Optional[List[int]] = None) -> List[torch.Tensor]:
+def exchange_tensors(tensors: List[torch.Tensor], recv_sizes: Optional[List[int]] = None, 
+                     precall_func = None, callback_func = None) -> List[torch.Tensor]:
     """    tensors is a list of size WORLD_SIZE. tensors[i] is sent to worker i.
     Returns a list of tensors recv_tensors, where recv_tensors[i] is the tensor
     received from worker i. Optionally, you can provide recv_sizes to specify the 
@@ -446,7 +472,6 @@ def exchange_tensors(tensors: List[torch.Tensor], recv_sizes: Optional[List[int]
     received from worker i.
 
     """
-
     trailing_dimensions = tensors[0].size()[1:]
     dtype = tensors[0].dtype
     assert all(x.size()[
@@ -462,7 +487,8 @@ def exchange_tensors(tensors: List[torch.Tensor], recv_sizes: Optional[List[int]
         all_their_sizes = [torch.Tensor([-1]).long().to(
             comm_device()) for _ in range(len(tensors))]
 
-        all_to_all(all_their_sizes, all_my_sizes)
+        all_to_all(all_their_sizes, all_my_sizes, 
+                   precall_func = precall_func, callback_func = callback_func)
 
         all_their_sizes_i = [cast(int, x.item()) for x in all_their_sizes]
     else:
@@ -473,12 +499,13 @@ def exchange_tensors(tensors: List[torch.Tensor], recv_sizes: Optional[List[int]
     recv_tensors = [torch.empty(x, *trailing_dimensions,
                                 dtype=dtype).to(comm_device()).fill_(-1) for x in all_their_sizes_aug]
 
-    all_to_all(recv_tensors, tensors_comm_device)
+    all_to_all(recv_tensors, tensors_comm_device, 
+               precall_func = precall_func, callback_func = callback_func)
 
     return [x[:s].to(tensors[0].device) for s, x in zip(all_their_sizes_i, recv_tensors)]
 
 
-def sync_params(model: torch.nn.Module):
+def sync_params(model: torch.nn.Module, precall_func = None, callback_func = None):
     """Synchronize the model parameters across all workers. The model parameters
     of worker 0 (the master worker) are copied to all workers
 
@@ -491,10 +518,11 @@ def sync_params(model: torch.nn.Module):
     for _, s_v in state_dict.items():
         if rank() != 0:
             s_v.data.zero_()
-        all_reduce(s_v.data, op=dist.ReduceOp.SUM, move_to_comm_device=True)
+        all_reduce(s_v.data, op=dist.ReduceOp.SUM, move_to_comm_device=True, 
+                   precall_func=precall_func, callback_func=callback_func)
 
 
-def gather_grads(model: torch.nn.Module):
+def gather_grads(model: torch.nn.Module, precall_func = None, callback_func = None):
     """Sum the parameter gradients from all workers. This should be called
     before optimizer.step
 
@@ -503,11 +531,10 @@ def gather_grads(model: torch.nn.Module):
     :type model: torch.nn.Module
 
     """
-
     for param in model.parameters():
         if param.grad is not None:
             all_reduce(param.grad, op=dist.ReduceOp.SUM,
-                       move_to_comm_device=True)
+                       move_to_comm_device=True, precall_func = precall_func, callback_func = callback_func)
 
 
 class CommThread:
@@ -548,4 +575,4 @@ class CommThread:
                 self.result_queue.put(result)
 
 
-comm_thread = CommThread()
+#comm_thread = CommThread()

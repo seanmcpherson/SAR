@@ -26,7 +26,7 @@ in a single worker)
 
 from typing import Tuple, Dict, List,  Optional
 import inspect
-import os
+import os, gc, sys
 import itertools
 import logging
 from collections.abc import MutableMapping
@@ -39,6 +39,8 @@ import dgl.function as fn  # type: ignore
 from torch import Tensor
 import torch.distributed as dist
 
+#from memory_profiler import profile
+import psutil
 
 from ..common_tuples import ShardEdgesAndFeatures, AggregationData, TensorPlace, ShardInfo
 from ..comm import exchange_tensors,  rank, all_reduce
@@ -49,6 +51,21 @@ logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 logger.setLevel(logging.DEBUG)
 
+def bytes2human(n):
+    # http://code.activestate.com/recipes/578019
+    # >>> bytes2human(10000)
+    # '9.8K'
+    # >>> bytes2human(100001221)
+    # '95.4M'
+    symbols = ('K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y')
+    prefix = {}
+    for i, s in enumerate(symbols):
+        prefix[s] = 1 << (i + 1) * 10
+    for s in reversed(symbols):
+        if abs(n) >= prefix[s]:
+            value = float(n) / prefix[s]
+            return '%.1f%s' % (value, s)
+    return "%sB" % n
 
 class GraphShard:
     """
@@ -185,9 +202,21 @@ class GraphShardManager:
 
     """
 
-    def __init__(self, graph_shards: List[GraphShard], local_src_seeds: Tensor, local_tgt_seeds: Tensor) -> None:
+    def __init__(self, graph_shards: List[GraphShard], local_src_seeds: Tensor, local_tgt_seeds: Tensor, 
+                 partition_data_manager=None, lock = None) -> None:
         super().__init__()
         self.graph_shards = graph_shards
+        self.pointer_list = []
+        self.linked_list = []
+        self.set_lock(lock)
+        if lock is None:
+            self.resume_process = None
+            self.pause_process = None
+        else:
+            self.resume_process = self._resume_process
+            self.pause_process = self._pause_process
+        self.partition_data_manager = partition_data_manager
+        self.metric_dict = None
 
         # source nodes and target nodes are all the same
         # srcdata, dstdata and ndata should be also the same
@@ -286,11 +315,235 @@ class GraphShardManager:
         self._sampling_graph = sampling_graph
         return sampling_graph
 
+    @property
+    def partition_data_manager(self):
+        try: 
+            partition_data_manager = self._partition_data_manager
+            return partition_data_manager
+        except:
+            raise ValueError("partition_data_manager not set")
+    
+    @partition_data_manager.setter
+    def partition_data_manager(self, partition_data_manager):
+        self._partition_data_manager = partition_data_manager
+
+    def get_lock(self):
+        return self._lock
+    def set_lock(self, lock):
+        self._lock = lock
+    def acquire_lock(self):
+        self._lock.acquire()
+        logger.debug("Node {} Lock Acquired".format(rank()))
+    def release_lock(self):
+        self._lock.release()
+        logger.debug("Node {} Lock Released".format(rank()))
+    
+    def _pause_process(self):
+        logger.debug("Node {} pause_process called".format(rank()))
+        p = psutil.Process()
+        if self.partition_data_manager:
+            if self.metric_dict is None:
+                self.metric_dict = {'pre-pause': list(), 
+                                    'post-pause': list(), 
+                                    'pre-resume': list(), 
+                                    'post-resume': list()}
+            self.metric_dict['pre-pause'].append(p.memory_full_info().uss)
+            self.partition_data_manager.save()
+            self.partition_data_manager.delete()
+            try:
+                #TODO fix this so the first exception doesn't stop saving everything else.
+                #only delete if successfully saved
+                self.partition_data_manager.save_tensor(self.dstdata, 'dstdata')
+                del self.dstdata
+                self.partition_data_manager.save_tensor(self.srcdata, 'srcdata')
+                del self.srcdata
+                self.partition_data_manager.save_tensor(self.edata, 'edata')
+                del self.edata
+                self.partition_data_manager.save_tensor(self.graph_shards, 'graph_shards')
+                del self.graph_shards
+                self.partition_data_manager.save_tensor(self.input_nodes, 'input_nodes')
+                del self.input_nodes
+                self.partition_data_manager.save_tensor(self.seeds, 'seeds')
+                del self.seeds
+                self.partition_data_manager.save_tensor(self.indices_required_from_me, 'indicies_required_from_me')
+                del self.indices_required_from_me
+            except Exception as e: 
+                logger.debug("_pause_process Exception: {}".format(e))
+
+
+            
+            for idx, tens in enumerate(self.pointer_list):
+                #if idx >=4:
+                '''
+                import ipdb
+                _stdin = sys.stdin
+                try:
+                    sys.stdin = open('/dev/stdin')
+                    ipdb.set_trace()
+                finally:
+                    sys.stdin = _stdin
+                '''
+                try:
+                    fname = "rank{}_tensor{}.pt".format(rank(), idx)
+                    if tens.requires_grad:
+                        tens_d = tens.detach()
+                        self.partition_data_manager.save_tensor(tens_d, fname)
+                        #with torch.no_grad():
+                        #    tens.set_()
+                        tens.storage().resize_(0)
+                    else:
+                        self.partition_data_manager.save_tensor(tens, fname)
+                        tens.resize_(0)
+                    
+                except Exception as e:
+                    # TODO check with tens error to here. 
+                    import ipdb
+                    _stdin = sys.stdin
+                    try:
+                        sys.stdin = open('/dev/stdin')
+                        ipdb.set_trace()
+                    finally:
+                        sys.stdin = _stdin
+            
+            for _, linked_tens in self.linked_list:
+                try:
+                    if linked_tens.requires_grad:
+                        linked_tens.storage().resize_(0)
+                    else:
+                        linked_tens.resize_(0)
+                except Exception as e:
+                    # TODO check with tens error to here. 
+                    import ipdb
+                    _stdin = sys.stdin
+                    try:
+                        sys.stdin = open('/dev/stdin')
+                        ipdb.set_trace()
+                    finally:
+                        sys.stdin = _stdin
+        gc.collect()
+        if self.metric_dict:
+            self.metric_dict['post-pause'].append(p.memory_full_info().uss)
+        self.release_lock()
+    
+    def _resume_process(self, handle = None):
+        logger.debug("Node {} resume_process called".format(rank()))
+        if handle:
+            handle.wait()
+        self.acquire_lock()
+        p = psutil.Process()
+        if self.metric_dict:
+            self.metric_dict['pre-resume'].append(p.memory_full_info().uss)
+        if self.partition_data_manager:
+            self.partition_data_manager.load()
+            try:
+                #only reset member variable if successfully loaded.
+                dstdata = self.partition_data_manager.load_tensor('dstdata')
+                if dstdata is not None:
+                    self.dstdata = dstdata
+                srcdata = self.partition_data_manager.load_tensor('srcdata')
+                if srcdata is not None:
+                    self.srcdata = srcdata
+                edata = self.partition_data_manager.load_tensor('edata')
+                if edata is not None: 
+                    self.edata = edata
+                graph_shards = self.partition_data_manager.load_tensor('graph_shards')
+                if graph_shards is not None:
+                    self.graph_shards = graph_shards
+                input_nodes = self.partition_data_manager.load_tensor('input_nodes')
+                if input_nodes is not None:
+                    self.input_nodes = input_nodes
+                seeds = self.partition_data_manager.load_tensor('seeds')
+                if seeds is not None:
+                    self.seeds = seeds
+                indices_required_from_me = self.partition_data_manager.load_tensor('indicies_required_from_me')
+                if indices_required_from_me is not None:
+                    self.indices_required_from_me = indices_required_from_me
+            except Exception as e: 
+                logger.debug("_resume_process Exception: {}".format(e))
+            for idx, tens in enumerate(self.pointer_list):
+                fname = "rank{}_tensor{}.pt".format(rank(), idx)
+                try:
+                    tmp_tens = self.partition_data_manager.load_tensor(fname)
+                    if tens.requires_grad:
+                        import numpy as np
+                        #tens.storage().resize_(int(np.prod(tmp_tens.size())))
+                        tens.storage().resize_(tmp_tens.numel())
+                        
+                        '''
+                        import ipdb
+                        _stdin = sys.stdin
+                        try:
+                            sys.stdin = open('/dev/stdin')
+                            ipdb.set_trace()
+                        finally:
+                            sys.stdin = _stdin
+                        '''
+                        #tens.set_(tmp_tens)
+                        #tens.data.copy_(tmp_tens.data)
+                        
+                    else:
+                        tens.resize_(tmp_tens.size())   
+                        #tens.data.copy_(tmp_tens.data)
+                        #tens.copy_(tmp_tens)
+                    #with torch.no_grad(): 
+                    #    tens.set_(tmp_tens)
+                    #tens.copy_(tmp_tens)
+                    ref_tens = tens.new(0)
+                    ref_tens.set_(tens)
+                    ref_tens.copy_(tmp_tens)
+                    #tens[:] = tmp_tens
+                except Exception as e:
+                    logger.info("Exception: {}".format(e))
+                    import ipdb
+                    _stdin = sys.stdin
+                    try:
+                        sys.stdin = open('/dev/stdin')
+                        ipdb.set_trace()
+                    finally:
+                        sys.stdin = _stdin
+            for ref_tens, linked_tens in self.linked_list:
+                try:
+                    if linked_tens.requires_grad:
+                        linked_tens.storage().resize_(ref_tens.numel())
+                    else:
+                        linked_tens.resize_(ref_tens.size())
+
+                    if not(linked_tens.storage().data_ptr() == ref_tens.storage().data_ptr()):
+                        raise ValueError("linked_tens and ref_tens data_ptr not equal")
+                    #with torch.no_grad():
+                    #    linked_tens.set_(ref_tens.storage(), 
+                    #                 storage_offset=linked_tens.storage_offset(), 
+                    #                 size=linked_tens.size(), 
+                    #                 stride=linked_tens.stride())
+                except Exception as e:
+
+                    import ipdb
+                    _stdin = sys.stdin
+                    try:
+                        sys.stdin = open('/dev/stdin')
+                        ipdb.set_trace()
+                    finally:
+                        sys.stdin = _stdin
+        #logger.debug("Memory used post-resume: {}".format(p.memory_full_info()))
+        if self.metric_dict:
+            self.metric_dict['post-resume'].append(p.memory_full_info().uss)
+
+    def print_metrics(self):
+        if self.metric_dict:
+            for metric in ['pre-pause', 'post-pause', 'pre-resume', 'post-resume']:
+                logger.info("Avg. Memory {}: {}".format(metric, bytes2human(sum(self.metric_dict[metric])/len(self.metric_dict[metric]))))
+
+            avg_diff = sum([pre - post for pre, post in zip(self.metric_dict['pre-pause'], self.metric_dict['post-pause'])])/len(self.metric_dict['pre-pause'])
+            logger.info("Avg. Memory Diff pre/post pause: {}".format(bytes2human(avg_diff)))
+
+            avg_diff = sum([post - pre for pre, post in zip(self.metric_dict['pre-resume'], self.metric_dict['post-resume'])])/len(self.metric_dict['pre-resume'])
+            logger.info("Avg. Memory Diff pre/post resume: {}".format(bytes2human(avg_diff)))
+
     def update_boundary_nodes_indices(self) -> List[Tensor]:
         all_my_sources_indices = [
             x.unique_src_nodes for x in self.graph_shards]
-
-        indices_required_from_me = exchange_tensors(all_my_sources_indices)
+        indices_required_from_me = exchange_tensors(all_my_sources_indices, 
+                                                    precall_func = self.pause_process, callback_func = self.resume_process)
         for ind in indices_required_from_me:
             ind.sub_(self.tgt_node_range[0])
         return indices_required_from_me
@@ -444,7 +697,7 @@ class GraphShardManager:
                 out_degrees[shard.unique_src_nodes - shard.src_range[0]
                             ] = shard.graph.out_degrees(etype=etype)
                 all_reduce(out_degrees, op=dist.ReduceOp.SUM,
-                           move_to_comm_device=True)
+                           move_to_comm_device=True, precall_func=self.pause_process, callback_func=self.resume_process)
                 if comm_round == rank():
                     out_degrees[out_degrees == 0] = 1
                     self.out_degrees_cache[etype] = out_degrees.to(

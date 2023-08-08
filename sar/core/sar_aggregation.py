@@ -33,7 +33,7 @@ import dgl.function as fn  # type: ignore
 from torch import Tensor
 
 from ..config import Config
-from ..comm import exchange_single_tensor,  rank,  comm_thread, world_size
+from ..comm import exchange_single_tensor,  rank,  CommThread, world_size
 from ..common_tuples import AggregationData, TensorPlace, ShardInfo
 
 if TYPE_CHECKING:
@@ -42,6 +42,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 logger.setLevel(logging.DEBUG)
+
+def start_comm_thread():
+    global comm_thread
+    comm_thread = CommThread()
 
 
 def message_has_parameters(param_foo: Callable[[Any], Tuple[Tensor, ...]]):
@@ -126,11 +130,13 @@ class BackwardManager:
         if self.n_grads_remaining == 0:
             self.backward_event.set()
 
-    def wait_for_all_grads(self):
+    def wait_for_all_grads(self, return_handle = False):
         if self.n_grads_remaining == 0:
             return
-
-        self.backward_event.wait()
+        if return_handle: 
+            return self.backward_event
+        else:
+            self.backward_event.wait()
 
     def update_grad(self, tensor_name: str, tensor: Tensor, indices: Tensor):
         self.grad_dict[tensor_name][indices] += tensor
@@ -158,7 +164,9 @@ def exchange_grads(send_grad: Tensor,
         recv_grad = send_grad.new(indices_required_from_me.size(0),
                                   *send_grad.size()[1:]).zero_()
 
-        exchange_single_tensor(recv_idx, send_idx, recv_grad, send_grad)
+        exchange_single_tensor(recv_idx, send_idx, recv_grad, send_grad, 
+                               precall_func = graph_shard_manager.pause_process, 
+                               callback_func = graph_shard_manager.resume_process)
         backward_manager.update_grad(
             tensor_name, recv_grad, indices_required_from_me)
         backward_manager.remote_grad_sent()
@@ -168,10 +176,15 @@ def grad_hook(grad: Tensor, graph_shard_manager: "GraphShardManager",
               backward_manager: BackwardManager,
               tensor_name: str, remote_idx: int) -> None:
 
-    comm_thread.submit_task(task_id=f'grad_{remote_idx}', task=functools.partial(
-        exchange_grads, send_grad=grad, graph_shard_manager=graph_shard_manager,
-        backward_manager=backward_manager, tensor_name=tensor_name,
-        send_idx=remote_idx))
+    if graph_shard_manager.get_lock():
+        exchange_grads(send_grad=grad, graph_shard_manager=graph_shard_manager,
+            backward_manager=backward_manager, tensor_name=tensor_name,
+            send_idx=remote_idx)
+    else:
+        comm_thread.submit_task(task_id=f'grad_{remote_idx}', task=functools.partial(
+            exchange_grads, send_grad=grad, graph_shard_manager=graph_shard_manager,
+            backward_manager=backward_manager, tensor_name=tensor_name,
+            send_idx=remote_idx))
 
 
 def exchange_features(graph_shard_manager: "GraphShardManager",
@@ -195,7 +208,9 @@ def exchange_features(graph_shard_manager: "GraphShardManager",
             recv_features = send_features.new(
                 n_recv_nodes, *send_features.size()[1:])
             exchange_single_tensor(recv_idx, send_idx, recv_features,
-                                   send_features)
+                                   send_features, 
+                                   precall_func = graph_shard_manager.pause_process, 
+                                   callback_func = graph_shard_manager.resume_process)
 
             logger.debug('recv features %s', recv_features.size())
             if grad_enabled and detached_input_tensors[tensor_idx].requires_grad:
@@ -423,7 +438,6 @@ def do_aggregation(aggregation_data: AggregationData,
                                           comm_round=pipeline_stage, grad_enabled=torch.is_grad_enabled())
                     )
                     pipeline_stage += 1
-
                 with profiler.record_function("COMM_FETCH"):
                     recv_idx, recv_dict = comm_thread.get_result()
             else:
@@ -533,7 +547,13 @@ class SAROp(torch.autograd.Function):  # pylint: disable = abstract-method
                 logger.debug('backward with successive rematerialization')
 
         t1 = time.time()
-        backward_manager.wait_for_all_grads()
+        if aggregation_data.graph_shard_manager.get_lock():
+            aggregation_data.graph_shard_manager.pause_process()
+            handle = backward_manager.wait_for_all_grads(return_handle=True)
+            aggregation_data.graph_shard_manager.resume_process(handle)
+        else:
+            backward_manager.wait_for_all_grads()
+            
         logger.debug('backward event wait done in %s', time.time() - t1)
         input_grads = []
         for tensor_idx, (tensor_place, tensor_name) in enumerate(aggregation_data.all_input_names):
