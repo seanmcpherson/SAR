@@ -479,7 +479,6 @@ class SAROp(torch.autograd.Function):  # pylint: disable = abstract-method
     def forward(ctx, aggregation_data: AggregationData,  # type: ignore
                 *all_input_tensors: Tensor) -> Tensor:  # type: ignore
 
-        logger.debug('in sar_op.forward')
         logger.debug('aggregation_data %s', aggregation_data)
 
         # Do not pass the parameter tensors to aggregation routines. They
@@ -532,7 +531,6 @@ class SAROp(torch.autograd.Function):  # pylint: disable = abstract-method
     # pylint: disable = arguments-differ
     # type: ignore
     def backward(ctx, output_grad) -> Tuple[Optional[Tensor], ...]:
-        logger.debug('in sar_op.backwards')
         logger.debug('backward aggregation data %s', ctx.aggregation_data)
         aggregation_data = ctx.aggregation_data
         backward_manager = ctx.backward_manager
