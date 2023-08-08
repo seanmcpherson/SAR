@@ -33,7 +33,7 @@ from collections.abc import MutableMapping
 from contextlib import contextmanager
 import torch
 import dgl  # type:ignore
-from dgl import DGLHeteroGraph
+from dgl import DGLGraph
 from dgl.function.base import TargetCode  # type:ignore
 import dgl.function as fn  # type: ignore
 from torch import Tensor
@@ -99,19 +99,13 @@ class GraphShard:
         self.unique_tgt_nodes, unique_tgt_nodes_inverse = \
             torch.unique(shard_edges_features.edges[1], return_inverse=True)
 
-        edges_src_nodes = torch.arange(self.unique_src_nodes.size(0))[
-            unique_src_nodes_inverse]
-
-        edges_tgt_nodes = torch.arange(self.unique_tgt_nodes.size(0))[
-            unique_tgt_nodes_inverse]
-
-        self.graph = dgl.create_block((edges_src_nodes, edges_tgt_nodes),
+        self.graph = dgl.create_block((unique_src_nodes_inverse, unique_tgt_nodes_inverse),
                                       num_src_nodes=self.unique_src_nodes.size(
                                           0),
                                       num_dst_nodes=self.unique_tgt_nodes.size(
                                           0)
                                       )
-        self._graph_reverse: Optional[DGLHeteroGraph] = None
+        self._graph_reverse: Optional[DGLGraph] = None
         self._shard_info: Optional[ShardInfo] = None
         self.graph.edata.update(shard_edges_features.edge_features)
 
@@ -125,7 +119,7 @@ class GraphShard:
         return self._shard_info
 
     @property
-    def graph_reverse(self) -> DGLHeteroGraph:
+    def graph_reverse(self) -> DGLGraph:
         if self._graph_reverse is None:
             edges_src, edges_tgt = self.graph.all_edges()
             self._graph_reverse = dgl.create_block((edges_tgt, edges_src),
@@ -186,7 +180,7 @@ class ChainedDataView(MutableMapping):
 class GraphShardManager:
     """
     Manages the local graph partition and exposes a subset of the interface
-    of dgl.heterograph.DGLHeteroGraph. Most importantly, it implements a
+    of dgl.heterograph.DGLGraph. Most importantly, it implements a
     distributed version of the ``update_all`` and ``apply_edges`` functions
     which are extensively used by GNN layers to exchange messages. By default, 
     both  ``update_all`` and  ``apply_edges`` use sequential aggregation and 
@@ -224,6 +218,10 @@ class GraphShardManager:
         self.partition_data_manager = partition_data_manager
         self.metric_dict = None
 
+        # source nodes and target nodes are all the same
+        # srcdata, dstdata and ndata should be also the same
+        self.src_is_tgt = local_src_seeds is local_tgt_seeds
+
         assert all(self.tgt_node_range ==
                    x.tgt_range for x in self.graph_shards[1:])
 
@@ -256,17 +254,22 @@ class GraphShardManager:
         self.in_degrees_cache: Dict[Optional[str], Tensor] = {}
         self.out_degrees_cache: Dict[Optional[str], Tensor] = {}
 
-        self.dstdata = ChainedDataView(self.num_dst_nodes())
         self.srcdata = ChainedDataView(self.num_src_nodes())
         self.edata = ChainedDataView(self.num_edges())
 
+        if self.src_is_tgt:
+            assert self.num_src_nodes() == self.num_dst_nodes()
+            self.dstdata = self.srcdata
+        else:
+            self.dstdata = ChainedDataView(self.num_dst_nodes())
+
         self._sampling_graph = None
 
-    @ property
+    @property
     def tgt_node_range(self) -> Tuple[int, int]:
         return self.graph_shards[0].tgt_range
 
-    @ property
+    @property
     def local_src_node_range(self) -> Tuple[int, int]:
         return self.graph_shards[rank()].src_range
 
@@ -545,19 +548,30 @@ class GraphShardManager:
             ind.sub_(self.tgt_node_range[0])
         return indices_required_from_me
 
-    @ contextmanager
+    @contextmanager
     def local_scope(self):
-        self.dstdata = ChainedDataView(
-            self.dstdata.acceptable_size, self.dstdata)
         self.srcdata = ChainedDataView(
             self.srcdata.acceptable_size, self.srcdata)
         self.edata = ChainedDataView(self.edata.acceptable_size, self.edata)
+        if self.src_is_tgt:
+            self.dstdata = self.srcdata
+        else:
+            self.dstdata = ChainedDataView(
+                self.dstdata.acceptable_size, self.dstdata)
         yield
-        self.dstdata = self.dstdata.rewind()
         self.srcdata = self.srcdata.rewind()
         self.edata = self.edata.rewind()
+        if self.src_is_tgt:
+            self.dstdata = self.srcdata
+        else:
+            self.dstdata = self.dstdata.rewind()
 
-    @ property
+    @property
+    def ndata(self):
+        assert self.src_is_tgt, "ndata shouldn't be used with MFGs"
+        return self.srcdata
+
+    @property
     def is_block(self):
         return True
 

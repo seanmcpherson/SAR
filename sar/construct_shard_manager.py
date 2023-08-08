@@ -22,10 +22,12 @@
 from typing import List, Tuple,  Dict
 import torch
 from torch import Tensor
+import dgl  # type: ignore
 import numpy as np  # type: ignore
 from .comm import exchange_tensors, rank
 from .common_tuples import ShardEdgesAndFeatures, PartitionData
 from .core import GraphShardManager, GraphShard
+from .data_loading import _mask_features_dict, _get_type_ordered_edges, load_dgl_partition_data_from_graph
 
 
 def map_to_contiguous_range(active_indices: Tensor, sampled_indices: Tensor) -> Tensor:
@@ -204,3 +206,7 @@ def construct_full_graph(partition_data: PartitionData, partition_data_manager =
     return GraphShardManager(graph_shard_list,
                              seed_nodes, seed_nodes, 
                              partition_data_manager=partition_data_manager,lock=lock)
+    
+def convert_dist_graph(dist_graph: dgl.distributed.DistGraph) -> GraphShardManager:
+    partition_data = load_dgl_partition_data_from_graph(dist_graph, dist_graph.device)
+    return construct_full_graph(partition_data)

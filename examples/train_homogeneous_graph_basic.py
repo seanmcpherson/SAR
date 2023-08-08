@@ -47,7 +47,7 @@ parser.add_argument('--ip-file', default='./ip_file', type=str,
                     help='File with ip-address. Worker 0 creates this file and all others read it ')
 
 
-parser.add_argument('--backend', default='nccl', type=str, choices=['ccl', 'nccl', 'mpi'],
+parser.add_argument('--backend', default='nccl', type=str, choices=['ccl', 'nccl', 'mpi', 'gloo'],
                     help='Communication backend to use '
                     )
 
@@ -110,7 +110,8 @@ def main():
     # Obtain the ip address of the master through the network file system
     master_ip_address = sar.nfs_ip_init(args.rank, args.ip_file)
     sar.initialize_comms(args.rank,
-                         args.world_size, master_ip_address,
+                         args.world_size,
+                         master_ip_address,
                          args.backend)
 
     # Load DGL partition data
