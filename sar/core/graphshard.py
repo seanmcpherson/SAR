@@ -350,27 +350,21 @@ class GraphShardManager:
             self.metric_dict['pre-pause'].append(p.memory_full_info().uss)
             self.partition_data_manager.save()
             self.partition_data_manager.delete()
-            try:
-                #TODO fix this so the first exception doesn't stop saving everything else.
-                #only delete if successfully saved
-                self.partition_data_manager.save_tensor(self.dstdata, 'dstdata')
+            
+            if hasattr(self, 'dstdata') and self.partition_data_manager.save_tensor(self.dstdata, 'dstdata'):
                 del self.dstdata
-                self.partition_data_manager.save_tensor(self.srcdata, 'srcdata')
+            if hasattr(self, 'srcdata') and self.partition_data_manager.save_tensor(self.srcdata, 'srcdata'):
                 del self.srcdata
-                self.partition_data_manager.save_tensor(self.edata, 'edata')
+            if hasattr(self, 'edata') and self.partition_data_manager.save_tensor(self.edata, 'edata'):
                 del self.edata
-                self.partition_data_manager.save_tensor(self.graph_shards, 'graph_shards')
+            if hasattr(self, 'graph_shards') and self.partition_data_manager.save_tensor(self.graph_shards, 'graph_shards'):
                 del self.graph_shards
-                self.partition_data_manager.save_tensor(self.input_nodes, 'input_nodes')
+            if hasattr(self, 'input_nodes') and self.partition_data_manager.save_tensor(self.input_nodes, 'input_nodes'):
                 del self.input_nodes
-                self.partition_data_manager.save_tensor(self.seeds, 'seeds')
+            if hasattr(self, 'seeds') and self.partition_data_manager.save_tensor(self.seeds, 'seeds'):
                 del self.seeds
-                self.partition_data_manager.save_tensor(self.indices_required_from_me, 'indicies_required_from_me')
+            if hasattr(self, 'indices_required_from_me') and self.partition_data_manager.save_tensor(self.indices_required_from_me, 'indicies_required_from_me'):
                 del self.indices_required_from_me
-            except Exception as e: 
-                logger.debug("_pause_process Exception: {}".format(e))
-
-
             
             for idx, tens in enumerate(self.pointer_list):
                 #if idx >=4:

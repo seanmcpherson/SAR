@@ -164,16 +164,21 @@ class PartitionDataManager:
         self._masks = masks
     
     def save(self):
-        if not os.path.exists(self.folder_name):
-            os.makedirs(self.folder_name)
-        #if self._features is not None:
-        #    torch.save(self._features, os.path.join(self.folder_name, "features.pt"))
-        if self._masks is not None:
-            torch.save(self._masks, os.path.join(self.folder_name, "masks.pt"))
-        if self._labels is not None:
-            torch.save(self._labels, os.path.join(self.folder_name, "labels.pt"))
-        if self._partition_data is not None:
-            torch.save(self._partition_data, os.path.join(self.folder_name, "partition_data.pt"))
+        try:
+            if not os.path.exists(self.folder_name):
+                os.makedirs(self.folder_name)
+            #if self._features is not None:
+            #    torch.save(self._features, os.path.join(self.folder_name, "features.pt"))
+            if self._masks is not None:
+                torch.save(self._masks, os.path.join(self.folder_name, "masks.pt"))
+            if self._labels is not None:
+                torch.save(self._labels, os.path.join(self.folder_name, "labels.pt"))
+            if self._partition_data is not None:
+                torch.save(self._partition_data, os.path.join(self.folder_name, "partition_data.pt"))
+        except Exception as e:
+            # logger.debug("_pause_process Exception: {}".format(e))
+            return False
+        return True
 
     def save_tensor(self, tensor, tensor_name):
         if not os.path.exists(self.folder_name):
