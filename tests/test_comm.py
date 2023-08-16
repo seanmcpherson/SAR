@@ -54,6 +54,7 @@ def test_gather_grads(world_size, backend):
         from models import GNNModel
         from base_utils import initialize_worker, get_random_graph, synchronize_processes,\
             load_partition_data
+        import torch.distributed as dist
         try:
             initialize_worker(rank, world_size, tmp_dir, backend=kwargs["backend"])
             graph_name = 'dummy_graph'
@@ -64,7 +65,9 @@ def test_gather_grads(world_size, backend):
                                         balance_edges=True)
             synchronize_processes()
             fgm, feat, labels = load_partition_data(rank, graph_name, tmp_dir)
-            model = GNNModel(feat.shape[1], labels.max()+1)
+            num_labels = labels.max() + 1
+            sar.comm.all_reduce(num_labels, dist.ReduceOp.MAX, move_to_comm_device=True)
+            model = GNNModel(feat.shape[1], num_labels)
             sar.sync_params(model)
             sar_logits = model(fgm, feat)
             sar_loss = F.cross_entropy(sar_logits, labels)
