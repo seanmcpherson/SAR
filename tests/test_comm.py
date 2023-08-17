@@ -117,6 +117,11 @@ def test_all_to_all(world_size, backend):
 @pytest.mark.parametrize("world_size", [2, 4, 8])
 @sar_test
 def test_exchange_single_tensor(world_size, backend):
+    """
+    Checks whether exchange_single_tensor operation works as expected.  Test is
+    designed in such a way, that after calling exchange_single_tensor, worker
+    should receive a tensor with `world_size` elements of its rank value
+    """
     def exchange_single_tensor(mp_dict, rank, world_size, tmp_dir, **kwargs):
         import torch
         import sar
