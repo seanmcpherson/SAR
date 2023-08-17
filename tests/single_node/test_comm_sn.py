@@ -105,11 +105,13 @@ def test_gather_grads_single_node(world_size, backend):
 @pytest.mark.parametrize("backend", ["ccl"])
 @pytest.mark.parametrize("world_size", [2, 4, 8])
 @sar_test
-def test_all_to_all_single_node(world_size, backend):
+def test_all_to_all_single_node_partition_data_manager(world_size, backend):
     """
     Checks whether all_to_all operation works as expected. Test is
     designed is such a way, that after calling all_to_all, each worker
     should receive a list of tensors with values equal to their rank
+    
+    It uses precall and callback functions from PartitionDataManager object
     """
     def all_to_all(mp_dict, rank, world_size, tmp_dir, **kwargs):
         try:
@@ -140,11 +142,13 @@ def test_all_to_all_single_node(world_size, backend):
 @pytest.mark.parametrize("backend", ["ccl"])
 @pytest.mark.parametrize("world_size", [2, 4, 8])
 @sar_test
-def test_exchange_single_tensor(world_size, backend):
+def test_exchange_single_tensor_partition_data_manager(world_size, backend):
     """
     Checks whether exchange_single_tensor operation works as expected.  Test is
     designed in such a way, that after calling exchange_single_tensor, worker
     should receive a tensor with `world_size` elements of its rank value
+    
+    It uses precall and callback functions from PartitionDataManager object
     """
     def exchange_single_tensor_single_node(mp_dict, rank, world_size, tmp_dir, **kwargs):
         try:
