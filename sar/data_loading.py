@@ -24,6 +24,155 @@ from torch import Tensor
 import dgl  # type: ignore
 from dgl.distributed.partition import load_partition  # type: ignore
 from .common_tuples import PartitionData, ShardEdgesAndFeatures
+import logging
+
+
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
+logger.setLevel(logging.DEBUG)
+
+
+class PartitionDataManager:
+    """
+    Manages loading and saving data to disk, when SAR is running in single-node mode.
+    
+    :param idx: rank of the worker
+    :type idx: int
+    :param lock: lock is used to synchronize processes, so that we can be sure only one partition is\
+    loaded at the same time
+    :type lock: Lock
+    :param folder_name_prefix: prefix of the name of the folder where the data will be saved on the disk
+    :type folder_name_prefix: string
+    """
+    def __init__(self, idx, lock, folder_name_prefix="partition_rank_"):
+        self.idx = idx
+        self.lock = lock
+        self.folder_name = f"{folder_name_prefix}{idx}"
+        self._features = None
+        self._masks = None
+        self._labels = None
+        self._partition_data = None
+
+    @property
+    def partition_data(self):
+        if self._partition_data is None:
+            raise ValueError("partition_data not set")
+        return self._partition_data
+    
+    @partition_data.setter
+    def partition_data(self, data):
+        self._partition_data = data
+
+    @partition_data.deleter
+    def partition_data(self):
+        del self._partition_data
+
+    @property
+    def features(self):
+        # if self._features is None:
+        #    raise ValueError("features not set")
+        return self._features
+    
+    @features.setter
+    def features(self, feats):
+        self._features = feats
+
+    @features.deleter
+    def features(self):
+        del self._features
+        self._features = None
+
+    @property
+    def labels(self):
+        if self._labels is None:
+            raise ValueError("labels not set")
+        return self._labels
+    
+    @labels.setter
+    def labels(self, labels):
+        self._labels = labels
+    
+    @property
+    def masks(self):
+        if self._masks is None:
+            raise ValueError("masks not set")
+        return self._masks
+    
+    @masks.setter
+    def masks(self, masks):
+        self._masks = masks
+    
+    def precall_func(self):
+        self.save()
+        if isinstance(self.features, torch.Tensor): 
+            self.save_tensor(self.features, 'features')
+            del self.features
+        self.delete()
+        self.lock.release()
+        print("Node {} Lock Released".format(self.idx))
+
+    def callback_func(self, handle):    
+        if handle: 
+            handle.wait()
+        self.lock.acquire()
+        print("Node {} Lock Acquired".format(self.idx))
+        self.load()
+        features = self.load_tensor('features')
+        if features is not None:
+            self.features = features
+            
+    def save(self):
+        try:
+            if not os.path.exists(self.folder_name):
+                os.makedirs(self.folder_name)
+            if self._masks is not None:
+                torch.save(self._masks, os.path.join(self.folder_name, "masks.pt"))
+            if self._labels is not None:
+                torch.save(self._labels, os.path.join(self.folder_name, "labels.pt"))
+            if self._partition_data is not None:
+                torch.save(self._partition_data, os.path.join(self.folder_name, "partition_data.pt"))
+        except Exception as e:
+            logger.debug("_pause_process Exception: {}".format(e))
+            return False
+        return True
+
+    def save_tensor(self, tensor, tensor_name):
+        if not os.path.exists(self.folder_name):
+            os.makedirs(self.folder_name)
+        if tensor is not None:
+            torch.save(tensor, os.path.join(self.folder_name, tensor_name + ".pt"))
+
+    def delete(self):
+        if hasattr(self, '_masks'):
+            del self._masks
+        if hasattr(self, '_labels'):
+            del self._labels
+        if hasattr(self, '_partition_data'):
+            del self._partition_data
+
+    def load(self):
+        if not os.path.exists(self.folder_name):
+            raise FileNotFoundError("No partition data saved")
+        if os.path.exists(os.path.join(self.folder_name, "masks.pt")):
+            self._masks = torch.load(os.path.join(self.folder_name, "masks.pt"))
+        else:
+            print("masks not loaded, no file saved")
+        if os.path.exists(os.path.join(self.folder_name, "labels.pt")):
+            self._labels = torch.load(os.path.join(self.folder_name, "labels.pt"))
+        else:
+            print("labels not loaded, no file saved")
+        if os.path.exists(os.path.join(self.folder_name, "partition_data.pt")):
+            self._partition_data = torch.load(os.path.join(self.folder_name, "partition_data.pt"))
+        else:
+            print("partition_data not loaded, no file saved")
+
+    def load_tensor(self, tensor_name):
+        if not os.path.exists(self.folder_name):
+            raise FileNotFoundError("No partition data saved")
+        if os.path.exists(os.path.join(self.folder_name, tensor_name + ".pt")):
+            return torch.load(os.path.join(self.folder_name, tensor_name + ".pt"))
+        else: 
+            return None
 
 
 def suffix_key_lookup(feature_dict: Dict[str, Tensor], key: str,

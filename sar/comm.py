@@ -402,6 +402,8 @@ def all_to_all_gloo_support(recv_tensors: List[torch.Tensor], send_tensors: List
     """
     if backend() == 'gloo':
         send_requests = []
+        if precall_func:
+            precall_func()
         for i in range(world_size()):
             if i == rank():
                 recv_tensors[i].copy_(send_tensors[i])
@@ -412,6 +414,8 @@ def all_to_all_gloo_support(recv_tensors: List[torch.Tensor], send_tensors: List
             if i != rank():
                 dist.recv(recv_tensors[i], i)
         dist.barrier()
+        if callback_func:
+            callback_func(None)
     else:
         if precall_func:
             precall_func()
@@ -456,9 +460,15 @@ def exchange_single_tensor(recv_idx: int, send_idx: int,
     if send_idx == recv_idx == rank():
         recv_tensor.copy_(send_tensor)
     elif backend() == 'gloo':
+        if precall_func:
+            precall_func()
         send_request = dist.isend(send_tensor.to(comm_device()), send_idx)
         dist.recv(recv_tensor.to(comm_device()), recv_idx)
-        dist.barrier()
+        if callback_func:
+            callback_func(send_request)
+        else:
+            dist.barrier()
+        
     else:
         send_tensors_list = [torch.Tensor([1.0]).to(dtype).to(comm_device())
                              for _ in range(world_size())]
