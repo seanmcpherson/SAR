@@ -203,6 +203,7 @@ def main(args):
     sar.initialize_comms(args.rank,
                          args.world_size, master_ip_address,
                          args.backend)
+    sar.start_comm_thread()
 
     data = prepare_data(device, args)
     (
@@ -275,7 +276,7 @@ if __name__ == "__main__":
                         help="File with ip-address. "
                              "Worker 0 creates this file and all others read it")
     parser.add_argument("--backend", type=str, default="ccl",
-                        choices=["ccl", "nccl", "mpi"],
+                        choices=["ccl", "nccl", "mpi", "gloo"],
                         help="Communication backend to use")
     parser.add_argument("--rank", type=int, default=0,
                         help="Rank of the current worker")

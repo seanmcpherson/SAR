@@ -23,6 +23,7 @@ def initialize_worker(rank, world_size, tmp_dir, backend="ccl"):
     ip_file = os.path.join(tmp_dir, 'ip_file')
     master_ip_address = sar.nfs_ip_init(rank, ip_file)
     sar.initialize_comms(rank, world_size, master_ip_address, backend)
+    sar.start_comm_thread()
 
 
 def get_random_graph():

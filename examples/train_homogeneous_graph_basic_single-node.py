@@ -50,7 +50,7 @@ parser.add_argument('--ip-file', default='./ip_file', type=str,
 parser.add_argument('--shared-file', default='./shared_file', type=str,
                     help='Path to a file required by torch.dist for inter-process communication')
 
-parser.add_argument('--backend', default='nccl', type=str, choices=['ccl', 'nccl', 'mpi'],
+parser.add_argument('--backend', default='nccl', type=str, choices=['ccl', 'nccl', 'mpi', 'gloo'],
                     help='Communication backend to use '
                     )
 
@@ -135,7 +135,7 @@ def run(args, rank, lock, barrier):
     master_ip_address = sar.nfs_ip_init(rank, args.ip_file)
     sar.initialize_comms(rank,
                          args.world_size, master_ip_address,
-                         args.backend, args.shared_file, barrier)
+                         args.backend, shared_file=args.shared_file, barrier=barrier)
 
     lock.acquire()
     print("Node {} Lock Acquired".format(rank))
