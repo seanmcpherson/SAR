@@ -50,7 +50,7 @@ parser.add_argument('--ip-file', default='./ip_file', type=str,
 parser.add_argument('--shared-file', default='./shared_file', type=str,
                     help='Path to a file required by torch.dist for inter-process communication')
 
-parser.add_argument('--backend', default='nccl', type=str, choices=['ccl', 'nccl', 'mpi'],
+parser.add_argument('--backend', default='nccl', type=str, choices=['ccl', 'nccl', 'mpi', 'gloo'],
                     help='Communication backend to use '
                     )
 
@@ -105,116 +105,6 @@ class GNNModel(nn.Module):
 
         return features
 
-class PartitionDataManager:
-    def __init__(self, idx, folder_name_prefix="partition_rank_"):
-        self.idx = idx
-        self.folder_name = f"{folder_name_prefix}{idx}"
-        self._features = None
-        self._masks = None
-        self._labels = None
-        self._partition_data = None
-
-    @property
-    def partition_data(self):
-        if self._partition_data is None:
-            raise ValueError("partition_data not set")
-        return self._partition_data
-    
-    @partition_data.setter
-    def partition_data(self, data):
-        self._partition_data = data
-
-    @partition_data.deleter
-    def partition_data(self):
-        del self._partition_data
-
-    @property
-    def features(self):
-        #if self._features is None:
-        #    raise ValueError("features not set")
-        return self._features
-    
-    @features.setter
-    def features(self, feats):
-        self._features = feats
-
-    @features.deleter
-    def features(self):
-        del self._features
-        self._features = None
-
-    @property
-    def labels(self):
-        if self._labels is None:
-            raise ValueError("labels not set")
-        return self._labels
-    
-    @labels.setter
-    def labels(self, labels):
-        self._labels = labels
-    
-    @property
-    def masks(self):
-        if self._masks is None:
-            raise ValueError("masks not set")
-        return self._masks
-    
-    @masks.setter
-    def masks(self, masks):
-        self._masks = masks
-    
-    def save(self):
-        if not os.path.exists(self.folder_name):
-            os.makedirs(self.folder_name)
-        #if self._features is not None:
-        #    torch.save(self._features, os.path.join(self.folder_name, "features.pt"))
-        if self._masks is not None:
-            torch.save(self._masks, os.path.join(self.folder_name, "masks.pt"))
-        if self._labels is not None:
-            torch.save(self._labels, os.path.join(self.folder_name, "labels.pt"))
-        if self._partition_data is not None:
-            torch.save(self._partition_data, os.path.join(self.folder_name, "partition_data.pt"))
-
-    def save_tensor(self, tensor, tensor_name):
-        if not os.path.exists(self.folder_name):
-            os.makedirs(self.folder_name)
-        if tensor is not None:
-            torch.save(tensor, os.path.join(self.folder_name, tensor_name + ".pt"))
-
-    def delete(self):
-        #del self._features
-        del self._masks
-        del self._labels
-        del self._partition_data
-
-    def load(self):
-        if not os.path.exists(self.folder_name):
-            raise FileNotFoundError("No partition data saved")
-        #if os.path.exists(os.path.join(self.folder_name, "features.pt")):
-        #    self._features = torch.load(os.path.join(self.folder_name, "features.pt"))
-        #else:
-        #    print("features not loaded, no file saved")
-        if os.path.exists(os.path.join(self.folder_name, "masks.pt")):
-            self._masks = torch.load(os.path.join(self.folder_name, "masks.pt"))
-        else:
-            print("masks not loaded, no file saved")
-        if os.path.exists(os.path.join(self.folder_name, "labels.pt")):
-            self._labels = torch.load(os.path.join(self.folder_name, "labels.pt"))
-        else:
-            print("labels not loaded, no file saved")
-        if os.path.exists(os.path.join(self.folder_name, "partition_data.pt")):
-            self._partition_data = torch.load(os.path.join(self.folder_name, "partition_data.pt"))
-        else:
-            print("partition_data not loaded, no file saved")
-
-    def load_tensor(self, tensor_name):
-        if not os.path.exists(self.folder_name):
-            raise FileNotFoundError("No partition data saved")
-        if os.path.exists(os.path.join(self.folder_name, tensor_name + ".pt")):
-            return torch.load(os.path.join(self.folder_name, tensor_name + ".pt"))
-        else: 
-            return None
-
 
 def main():
     args = parser.parse_args()
@@ -245,14 +135,17 @@ def run(args, rank, lock, barrier):
     master_ip_address = sar.nfs_ip_init(rank, args.ip_file)
     sar.initialize_comms(rank,
                          args.world_size, master_ip_address,
-                         args.backend, args.shared_file, barrier)
+                         args.backend, shared_file=args.shared_file, barrier=barrier)
 
     lock.acquire()
     print("Node {} Lock Acquired".format(rank))
 
     sar.start_comm_thread()
+    
+    # Instantiate PartitionDataManager for managing data saving and loading from disk
+    partition_data_manager = sar.PartitionDataManager(rank, lock)
+    
     # Load DGL partition data
-    partition_data_manager = PartitionDataManager(rank)
     partition_data_manager.partition_data = sar.load_dgl_partition_data(
         args.partitioning_json_file, rank, device)
 
@@ -275,34 +168,12 @@ def run(args, rank, lock, barrier):
 
     # Obtain the number of classes by finding the max label across all workers
     num_labels = partition_data_manager.labels.max() + 1
-    
-    def precall_func():
-        partition_data_manager.save()
-        if isinstance(partition_data_manager.features, torch.Tensor): 
-            partition_data_manager.save_tensor(partition_data_manager.features, 'features')
-            del partition_data_manager.features
-        partition_data_manager.delete()
-        lock.release()
-        print("Node {} Lock Released".format(rank))
-
-    def callback_func(handle):    
-        handle.wait()
-        lock.acquire()
-        print("Node {} Lock Acquired".format(rank))
-        partition_data_manager.load()
-        features = partition_data_manager.load_tensor('features')
-        if features is not None:
-            partition_data_manager.features = features
-
-    
     sar.comm.all_reduce(num_labels, dist.ReduceOp.MAX, move_to_comm_device=True, 
-                        precall_func=precall_func, callback_func=callback_func)
+                        precall_func=partition_data_manager.precall_func, callback_func=partition_data_manager.callback_func)
     print("Node {} Num Labels {}".format(rank, num_labels))
-
     num_labels = num_labels.item() 
     
     partition_data_manager.features = sar.suffix_key_lookup(partition_data_manager.partition_data.node_features, 'features').to(device)
-    
     
     gnn_model = GNNModel(partition_data_manager.features.size(1),
                          args.hidden_layer_dim,
@@ -310,14 +181,14 @@ def run(args, rank, lock, barrier):
     print('model', gnn_model)
 
     # Synchronize the model parmeters across all workers
-    sar.sync_params(gnn_model, precall_func=precall_func, callback_func=callback_func)
+    sar.sync_params(gnn_model, precall_func=partition_data_manager.precall_func, callback_func=partition_data_manager.callback_func)
 
     # Obtain the number of labeled nodes in the training
     # This will be needed to properly obtain a cross entropy loss
     # normalized by the number of training examples
     n_train_points = torch.LongTensor([partition_data_manager.masks['train_indices'].numel()])
     sar.comm.all_reduce(n_train_points, op=dist.ReduceOp.SUM, move_to_comm_device=True, 
-                        precall_func=precall_func, callback_func=callback_func)
+                        precall_func=partition_data_manager.precall_func, callback_func=partition_data_manager.callback_func)
     n_train_points = n_train_points.item()
 
     full_graph_manager = sar.construct_full_graph(partition_data_manager.partition_data, 
@@ -327,8 +198,6 @@ def run(args, rank, lock, barrier):
     del partition_data_manager.partition_data
     partition_data_manager.partition_data = None
     
-    #full_graph_manager.partition_data_manager = partition_data_manager
-
     optimizer = torch.optim.Adam(gnn_model.parameters(), lr=args.lr)
     for train_iter_idx in range(args.train_iters):
         logger.debug(f'{rank} : starting training iteration {train_iter_idx}')

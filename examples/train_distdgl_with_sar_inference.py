@@ -375,6 +375,7 @@ def main(args):
                          master_ip_address,
                          args.backend
                          )
+    sar.start_comm_thread()
 
     print(socket.gethostname(), "rank:", g.rank())
 
