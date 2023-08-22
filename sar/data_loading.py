@@ -143,9 +143,12 @@ class PartitionDataManager:
             torch.save(tensor, os.path.join(self.folder_name, tensor_name + ".pt"))
 
     def delete(self):
-        del self._masks
-        del self._labels
-        del self._partition_data
+        if hasattr(self, '_masks'):
+            del self._masks
+        if hasattr(self, '_labels'):
+            del self._labels
+        if hasattr(self, '_partition_data'):
+            del self._partition_data
 
     def load(self):
         if not os.path.exists(self.folder_name):
