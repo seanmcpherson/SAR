@@ -130,9 +130,9 @@ def nfs_ip_init(_rank: int, ip_file: str) -> str:
 
 
 def initialize_comms(_rank: int, _world_size: int, master_ip_address: str,
-                     backend: str, shared_file: str = None, barrier: Barrier = None, 
-                     _comm_device: Optional[torch.device] = None,
-                     master_port_number: int = 12345):
+                     backend: str, _comm_device: Optional[torch.device] = None,
+                     master_port_number: int = 12345, shared_file: str = None,
+                     barrier: Barrier = None):
     """
     Initialize Pytorch's communication library
 
@@ -144,17 +144,15 @@ def initialize_comms(_rank: int, _world_size: int, master_ip_address: str,
     :type master_ip_address: str
     :param backend: Backend to use. Can be ccl, nccl, mpi or gloo
     :type backend: str
-    :param shared_file: Path to a file required by torch.dist for inter-process communication
-    :type shared_file: str
-    :param barrier: Barrier for synchronizing processes
-    :type barrier: Barrier
     :param _comm_device:  The device on which the tensors should be on in order to transmit them\
     through the backend. If not provided, the device is infered based on the backend type
     :type _comm_device: torch.device
     :param master_port_number:  The port number on the master
-    :type _comm_device: int
-
-
+    :type master_port_number: int
+    :param shared_file: Path to a file required by torch.dist for inter-process communication
+    :type shared_file: str
+    :param barrier: Barrier for synchronizing processes
+    :type barrier: Barrier
     """
     assert backend in ['ccl', 'nccl', 'mpi', 'gloo'],\
         'backend must be ccl, nccl, mpi or gloo'

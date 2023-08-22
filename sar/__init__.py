@@ -29,7 +29,7 @@ from .comm import initialize_comms, rank, world_size, comm_device,\
 from .core import GraphShardManager, message_has_parameters, DistributedBlock,\
     DistNeighborSampler, DataLoader, start_comm_thread
 from .construct_shard_manager import construct_mfgs, construct_full_graph, convert_dist_graph
-from .data_loading import load_dgl_partition_data, suffix_key_lookup
+from .data_loading import load_dgl_partition_data, suffix_key_lookup, PartitionDataManager
 from .distributed_bn import DistributedBN1D
 from .config import Config
 from .edge_softmax import edge_softmax
