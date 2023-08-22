@@ -49,7 +49,7 @@ def test_sync_params_single_node(backend, world_size):
             assert torch.all(torch.eq(mp_dict[f"result_0"][key], mp_dict[f"result_{rank}"][key]))
 
 
-@pytest.mark.parametrize("backend", ["ccl"])
+@pytest.mark.parametrize("backend", ["ccl", "gloo"])
 @pytest.mark.parametrize("world_size", [2, 4, 8])
 @sar_test
 def test_gather_grads_single_node(world_size, backend):
@@ -104,7 +104,7 @@ def test_gather_grads_single_node(world_size, backend):
             assert torch.all(torch.eq(mp_dict["result_0"][i], mp_dict[f"result_{rank}"][i]))
 
 
-@pytest.mark.parametrize("backend", ["ccl"])
+@pytest.mark.parametrize("backend", ["ccl", "gloo"])
 @pytest.mark.parametrize("world_size", [2, 4, 8])
 @sar_test
 def test_all_to_all_single_node_partition_data_manager(world_size, backend):
@@ -142,7 +142,7 @@ def test_all_to_all_single_node_partition_data_manager(world_size, backend):
             assert torch.all(torch.eq(tensor, torch.tensor([rank] * world_size)))
             
             
-@pytest.mark.parametrize("backend", ["ccl"])
+@pytest.mark.parametrize("backend", ["ccl", "gloo"])
 @pytest.mark.parametrize("world_size", [2, 4, 8])
 @sar_test
 def test_all_to_all_single_node_graph_shard_manager(world_size, backend):
@@ -195,7 +195,7 @@ def test_all_to_all_single_node_graph_shard_manager(world_size, backend):
             assert torch.all(torch.eq(tensor, torch.tensor([rank] * world_size)))
             
             
-@pytest.mark.parametrize("backend", ["ccl"])
+@pytest.mark.parametrize("backend", ["ccl", "gloo"])
 @pytest.mark.parametrize("world_size", [2, 4, 8])
 @sar_test
 def test_exchange_single_tensor_partition_data_manager(world_size, backend):
@@ -238,7 +238,7 @@ def test_exchange_single_tensor_partition_data_manager(world_size, backend):
     mp_dict = run_workers(exchange_single_tensor_single_node, world_size, backend=backend, lock=lock, barrier=barrier)
 
 
-@pytest.mark.parametrize("backend", ["ccl"])
+@pytest.mark.parametrize("backend", ["ccl", "gloo"])
 @pytest.mark.parametrize("world_size", [2, 4, 8])
 @sar_test
 def test_exchange_single_tensor_graph_shard_manager(world_size, backend):

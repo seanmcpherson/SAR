@@ -113,7 +113,8 @@ class PartitionDataManager:
         print("Node {} Lock Released".format(self.idx))
 
     def callback_func(self, handle):    
-        handle.wait()
+        if handle: 
+            handle.wait()
         self.lock.acquire()
         print("Node {} Lock Acquired".format(self.idx))
         self.load()
