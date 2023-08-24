@@ -359,11 +359,17 @@ class GraphShardManager:
                 del self.edata
             if hasattr(self, 'graph_shards') and self.partition_data_manager.save_tensor(self.graph_shards, 'graph_shards'):
                 del self.graph_shards
-            if hasattr(self, 'input_nodes') and self.partition_data_manager.save_tensor(self.input_nodes, 'input_nodes'):
+            if hasattr(self, 'input_nodes') and \
+                    self.partition_data_manager.does_file_exist("input_nodes.pt") is False and \
+                    self.partition_data_manager.save_tensor(self.input_nodes, 'input_nodes'):
                 del self.input_nodes
-            if hasattr(self, 'seeds') and self.partition_data_manager.save_tensor(self.seeds, 'seeds'):
+            if hasattr(self, 'seeds') and \
+                    self.partition_data_manager.does_file_exist("seeds.pt") is False and \
+                    self.partition_data_manager.save_tensor(self.seeds, 'seeds'):
                 del self.seeds
-            if hasattr(self, 'indices_required_from_me') and self.partition_data_manager.save_tensor(self.indices_required_from_me, 'indicies_required_from_me'):
+            if hasattr(self, 'indices_required_from_me') and \
+                    self.partition_data_manager.does_file_exist("indicies_required_from_me.pt") is False and \
+                    self.partition_data_manager.save_tensor(self.indices_required_from_me, 'indicies_required_from_me'):
                 del self.indices_required_from_me
             
             for idx, tens in enumerate(self.pointer_list):
@@ -378,7 +384,7 @@ class GraphShardManager:
                     sys.stdin = _stdin
                 '''
                 try:
-                    fname = "rank{}_tensor{}.pt".format(rank(), idx)
+                    fname = "rank{}_tensor{}".format(rank(), idx)
                     if tens.requires_grad:
                         tens_d = tens.detach()
                         self.partition_data_manager.save_tensor(tens_d, fname)
@@ -455,7 +461,7 @@ class GraphShardManager:
             except Exception as e: 
                 logger.debug("_resume_process Exception: {}".format(e))
             for idx, tens in enumerate(self.pointer_list):
-                fname = "rank{}_tensor{}.pt".format(rank(), idx)
+                fname = "rank{}_tensor{}".format(rank(), idx)
                 try:
                     tmp_tens = self.partition_data_manager.load_tensor(fname)
                     if tens.requires_grad:

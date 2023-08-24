@@ -19,6 +19,7 @@
 # SOFTWARE.
 
 import os
+import shutil
 from typing import List, Tuple, Dict, Optional
 import torch
 from torch import Tensor
@@ -53,6 +54,7 @@ class PartitionDataManager:
         self._masks = None
         self._labels = None
         self._partition_data = None
+        self.remove_files()
 
     @property
     def partition_data(self):
@@ -126,12 +128,16 @@ class PartitionDataManager:
         try:
             if not os.path.exists(self.folder_name):
                 os.makedirs(self.folder_name)
-            if self._masks is not None:
+                
+            if self._masks is not None and self.does_file_exist("masks.pt") is False:
                 torch.save(self._masks, os.path.join(self.folder_name, "masks.pt"))
-            if self._labels is not None:
+                
+            if self._labels is not None and self.does_file_exist("labels.pt") is False:
                 torch.save(self._labels, os.path.join(self.folder_name, "labels.pt"))
-            if self._partition_data is not None:
+                
+            if self._partition_data is not None and self.does_file_exist("partition_data.pt") is False:
                 torch.save(self._partition_data, os.path.join(self.folder_name, "partition_data.pt"))
+                
         except Exception as e:
             logger.debug("_pause_process Exception: {}".format(e))
             return False
@@ -154,15 +160,18 @@ class PartitionDataManager:
     def load(self):
         if not os.path.exists(self.folder_name):
             raise FileNotFoundError("No partition data saved")
-        if os.path.exists(os.path.join(self.folder_name, "masks.pt")):
+        
+        if self.does_file_exist("masks.pt") is True:
             self._masks = torch.load(os.path.join(self.folder_name, "masks.pt"))
         else:
             print("masks not loaded, no file saved")
-        if os.path.exists(os.path.join(self.folder_name, "labels.pt")):
+            
+        if self.does_file_exist("labels.pt") is True:
             self._labels = torch.load(os.path.join(self.folder_name, "labels.pt"))
         else:
             print("labels not loaded, no file saved")
-        if os.path.exists(os.path.join(self.folder_name, "partition_data.pt")):
+            
+        if self.does_file_exist("partition_data.pt") is True:
             self._partition_data = torch.load(os.path.join(self.folder_name, "partition_data.pt"))
         else:
             print("partition_data not loaded, no file saved")
@@ -174,7 +183,15 @@ class PartitionDataManager:
             return torch.load(os.path.join(self.folder_name, tensor_name + ".pt"))
         else: 
             return None
-
+        
+    def does_file_exist(self, file_name):
+        file_path = os.path.join(self.folder_name, file_name)
+        return os.path.exists(file_path)
+        
+    def remove_files(self):
+        if os.path.exists(self.folder_name):
+            shutil.rmtree(self.folder_name)
+        
 
 def suffix_key_lookup(feature_dict: Dict[str, Tensor], key: str,
                       expand_to_all: bool = False,
