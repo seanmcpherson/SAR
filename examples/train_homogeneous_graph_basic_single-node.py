@@ -257,6 +257,9 @@ def run(args, rank, lock, barrier):
         
         full_graph_manager.print_metrics()
         
+        # Clean files saved on disk during epoch
+        partition_data_manager.remove_files()
+        
     lock.release()
 
 if __name__ == '__main__':
