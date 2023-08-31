@@ -418,7 +418,6 @@ def all_to_all_gloo_support(recv_tensors: List[torch.Tensor], send_tensors: List
         if precall_func:
             precall_func()
         handle = dist.all_to_all(recv_tensors, send_tensors, async_op=True)
-        #print('all to all complete', recv_tensors, send_tensors, flush=True)
         if callback_func:
             callback_func(handle)
         else:
@@ -532,7 +531,6 @@ def exchange_tensors(tensors: List[torch.Tensor], recv_sizes: Optional[List[int]
         all_their_sizes_i = recv_sizes
 
     all_their_sizes_aug = [max(1, x) for x in all_their_sizes_i]
-    #print('all their sizes aug', all_their_sizes_aug)
     recv_tensors = [torch.empty(x, *trailing_dimensions,
                                 dtype=dtype).to(comm_device()).fill_(-1) for x in all_their_sizes_aug]
 
@@ -610,6 +608,3 @@ class CommThread:
             result = task()
             if result is not None:
                 self.result_queue.put(result)
-
-
-#comm_thread = CommThread()
