@@ -255,7 +255,7 @@ def run(args, rank, lock, barrier):
         ])
         print(result_message, flush=True)
         
-        full_graph_manager.print_metrics()
+        full_graph_manager.memory_tracker.print_metrics()
         
         # Clean files saved on disk during epoch
         partition_data_manager.remove_files()

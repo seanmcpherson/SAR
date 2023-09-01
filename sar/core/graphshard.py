@@ -51,21 +51,6 @@ logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 logger.setLevel(logging.DEBUG)
 
-def bytes2human(n):
-    # http://code.activestate.com/recipes/578019
-    # >>> bytes2human(10000)
-    # '9.8K'
-    # >>> bytes2human(100001221)
-    # '95.4M'
-    symbols = ('K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y')
-    prefix = {}
-    for i, s in enumerate(symbols):
-        prefix[s] = 1 << (i + 1) * 10
-    for s in reversed(symbols):
-        if abs(n) >= prefix[s]:
-            value = float(n) / prefix[s]
-            return '%.1f%s' % (value, s)
-    return "%sB" % n
 
 class GraphShard:
     """
@@ -216,7 +201,7 @@ class GraphShardManager:
             self.resume_process = self._resume_process
             self.pause_process = self._pause_process
         self.partition_data_manager = partition_data_manager
-        self.metric_dict = None
+        self.memory_tracker = MemoryTracker()
 
         # source nodes and target nodes are all the same
         # srcdata, dstdata and ndata should be also the same
@@ -339,15 +324,8 @@ class GraphShardManager:
         logger.debug("Node {} Lock Released".format(rank()))
     
     def _pause_process(self):
-        logger.debug("Node {} pause_process called".format(rank()))
-        p = psutil.Process()
         if self.partition_data_manager:
-            if self.metric_dict is None:
-                self.metric_dict = {'pre-pause': list(), 
-                                    'post-pause': list(), 
-                                    'pre-resume': list(), 
-                                    'post-resume': list()}
-            self.metric_dict['pre-pause'].append(p.memory_full_info().uss)
+            self.memory_tracker.measure_memory("pre-pause")
             self.partition_data_manager.save()
             self.partition_data_manager.delete()
             
@@ -421,8 +399,7 @@ class GraphShardManager:
                     finally:
                         sys.stdin = _stdin
         gc.collect()
-        if self.metric_dict:
-            self.metric_dict['post-pause'].append(p.memory_full_info().uss)
+        self.memory_tracker.measure_memory("post-pause")
         self.release_lock()
     
     def _resume_process(self, handle = None):
@@ -430,9 +407,7 @@ class GraphShardManager:
         if handle:
             handle.wait()
         self.acquire_lock()
-        p = psutil.Process()
-        if self.metric_dict:
-            self.metric_dict['pre-resume'].append(p.memory_full_info().uss)
+        self.memory_tracker.measure_memory("pre-resume")
         if self.partition_data_manager:
             self.partition_data_manager.load()
             try:
@@ -516,28 +491,9 @@ class GraphShardManager:
                     #                 size=linked_tens.size(), 
                     #                 stride=linked_tens.stride())
                 except Exception as e:
-
-                    import ipdb
-                    _stdin = sys.stdin
-                    try:
-                        sys.stdin = open('/dev/stdin')
-                        ipdb.set_trace()
-                    finally:
-                        sys.stdin = _stdin
-        #logger.debug("Memory used post-resume: {}".format(p.memory_full_info()))
-        if self.metric_dict:
-            self.metric_dict['post-resume'].append(p.memory_full_info().uss)
-
-    def print_metrics(self):
-        if self.metric_dict:
-            for metric in ['pre-pause', 'post-pause', 'pre-resume', 'post-resume']:
-                logger.info("Avg. Memory {}: {}".format(metric, bytes2human(sum(self.metric_dict[metric])/len(self.metric_dict[metric]))))
-
-            avg_diff = sum([pre - post for pre, post in zip(self.metric_dict['pre-pause'], self.metric_dict['post-pause'])])/len(self.metric_dict['pre-pause'])
-            logger.info("Avg. Memory Diff pre/post pause: {}".format(bytes2human(avg_diff)))
-
-            avg_diff = sum([post - pre for pre, post in zip(self.metric_dict['pre-resume'], self.metric_dict['post-resume'])])/len(self.metric_dict['pre-resume'])
-            logger.info("Avg. Memory Diff pre/post resume: {}".format(bytes2human(avg_diff)))
+                    logger.error(f"Exception during loading tensors: {e}")
+                    
+        self.memory_tracker.measure_memory("post-resume")
 
     def update_boundary_nodes_indices(self) -> List[Tensor]:
         all_my_sources_indices = [
@@ -817,3 +773,47 @@ class GraphShardManager:
         result_val = sar_op(aggregation_data, *all_input_tensors)
 
         self.edata[message_func.out_field] = result_val
+
+
+class MemoryTracker:
+    """
+    Tracks memory usage of each process during single-node training. Saves data 
+    in its metric_dict dictionary, which always contains four keys.
+    "pre-pause" - list for tracking memory usage right before dumping data to disk
+    "post-pause" - list for tracking memory usage right after dumping data to disk
+    "pre-resume" - list for tracking memory usage right before loading data from disk
+    "pre-resume" - list for tracking memory usage right after loading data from disk
+    
+    """
+    def __init__(self):
+        self.p = psutil.Process()
+        self.metric_dict = {'pre-pause': list(), 
+                            'post-pause': list(),
+                            'pre-resume': list(), 
+                            'post-resume': list()}
+    
+    def measure_memory(self, key):
+        self.metric_dict[key].append(self.p.memory_full_info().uss)
+    
+    def print_metrics(self):
+        print(f"Metrics for rank: {rank()} - pid: {os.getpid()} - parent-pid: {os.getppid()}")
+        for metric, data in self.metric_dict.items():
+            logger.info(f"Avg. Memory {metric}: {self.bytes2human(sum(data) / len(data))}")
+            
+        avg_diff = sum([pre - post for pre, post in zip(self.metric_dict['pre-pause'], self.metric_dict['post-pause'])])/len(self.metric_dict['pre-pause'])
+        logger.info("Avg. Memory Diff pre/post pause: {}".format(self.bytes2human(avg_diff)))
+
+        avg_diff = sum([post - pre for pre, post in zip(self.metric_dict['pre-resume'], self.metric_dict['post-resume'])])/len(self.metric_dict['pre-resume'])
+        logger.info("Avg. Memory Diff pre/post resume: {}".format(self.bytes2human(avg_diff)))
+    
+    @staticmethod
+    def bytes2human(n):
+        symbols = ('K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y')
+        prefix = {}
+        for i, s in enumerate(symbols):
+            prefix[s] = 1 << (i + 1) * 10
+        for s in reversed(symbols):
+            if abs(n) >= prefix[s]:
+                value = float(n) / prefix[s]
+                return '%.1f%s' % (value, s)
+        return "%sB" % n
