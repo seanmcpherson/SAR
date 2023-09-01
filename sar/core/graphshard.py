@@ -201,7 +201,8 @@ class GraphShardManager:
             self.resume_process = self._resume_process
             self.pause_process = self._pause_process
         self.partition_data_manager = partition_data_manager
-        self.memory_tracker = MemoryTracker()
+        if os.environ.get("SAR_SN_TRACK_MEMORY") is not None:
+            self.memory_tracker = MemoryTracker()
 
         # source nodes and target nodes are all the same
         # srcdata, dstdata and ndata should be also the same
@@ -325,7 +326,8 @@ class GraphShardManager:
     
     def _pause_process(self):
         if self.partition_data_manager:
-            self.memory_tracker.measure_memory("pre-pause")
+            if os.environ.get("SAR_SN_TRACK_MEMORY") is not None:
+                self.memory_tracker.measure_memory("pre-pause")
             self.partition_data_manager.save()
             self.partition_data_manager.delete()
             
@@ -399,7 +401,8 @@ class GraphShardManager:
                     finally:
                         sys.stdin = _stdin
         gc.collect()
-        self.memory_tracker.measure_memory("post-pause")
+        if os.environ.get("SAR_SN_TRACK_MEMORY") is not None:
+            self.memory_tracker.measure_memory("post-pause")
         self.release_lock()
     
     def _resume_process(self, handle = None):
@@ -407,7 +410,8 @@ class GraphShardManager:
         if handle:
             handle.wait()
         self.acquire_lock()
-        self.memory_tracker.measure_memory("pre-resume")
+        if os.environ.get("SAR_SN_TRACK_MEMORY") is not None:
+            self.memory_tracker.measure_memory("pre-resume")
         if self.partition_data_manager:
             self.partition_data_manager.load()
             try:
@@ -493,7 +497,8 @@ class GraphShardManager:
                 except Exception as e:
                     logger.error(f"Exception during loading tensors: {e}")
                     
-        self.memory_tracker.measure_memory("post-resume")
+        if os.environ.get("SAR_SN_TRACK_MEMORY") is not None:
+            self.memory_tracker.measure_memory("post-resume")
 
     def update_boundary_nodes_indices(self) -> List[Tensor]:
         all_my_sources_indices = [
