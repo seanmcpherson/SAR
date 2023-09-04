@@ -138,9 +138,6 @@ def run(args, rank, lock, barrier):
                          args.backend, shared_file=args.shared_file, barrier=barrier)
 
     lock.acquire()
-    print("Node {} Lock Acquired".format(rank))
-
-    sar.start_comm_thread()
     
     # Instantiate PartitionDataManager for managing data saving and loading from disk
     partition_data_manager = sar.PartitionDataManager(rank, lock)

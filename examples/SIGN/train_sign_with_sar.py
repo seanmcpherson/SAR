@@ -203,7 +203,6 @@ def main(args):
     sar.initialize_comms(args.rank,
                          args.world_size, master_ip_address,
                          args.backend)
-    sar.start_comm_thread()
 
     data = prepare_data(device, args)
     (

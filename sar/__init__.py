@@ -27,7 +27,7 @@ from . import core
 from .comm import initialize_comms, rank, world_size, comm_device,\
     nfs_ip_init, sync_params, gather_grads
 from .core import GraphShardManager, message_has_parameters, DistributedBlock,\
-    DistNeighborSampler, DataLoader, start_comm_thread
+    DistNeighborSampler, DataLoader
 from .construct_shard_manager import construct_mfgs, construct_full_graph, convert_dist_graph
 from .data_loading import load_dgl_partition_data, suffix_key_lookup, PartitionDataManager
 from .distributed_bn import DistributedBN1D

@@ -33,7 +33,7 @@ import dgl.function as fn  # type: ignore
 from torch import Tensor
 
 from ..config import Config
-from ..comm import exchange_single_tensor,  rank,  CommThread, world_size
+from ..comm import exchange_single_tensor,  rank, comm_thread, world_size
 from ..common_tuples import AggregationData, TensorPlace, ShardInfo
 
 if TYPE_CHECKING:
@@ -42,10 +42,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 logger.setLevel(logging.DEBUG)
-
-def start_comm_thread():
-    global comm_thread
-    comm_thread = CommThread()
 
 
 def message_has_parameters(param_foo: Callable[[Any], Tuple[Tensor, ...]]):
