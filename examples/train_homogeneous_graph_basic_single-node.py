@@ -162,7 +162,7 @@ def run(args, rank, lock, barrier):
             as_tuple=False).view(-1).to(device)
 
     partition_data_manager.labels = sar.suffix_key_lookup(partition_data_manager.partition_data.node_features,
-                                   'label').long().to(device)
+                                   'labels').long().to(device)
 
     # Obtain the number of classes by finding the max label across all workers
     num_labels = partition_data_manager.labels.max() + 1
@@ -170,7 +170,7 @@ def run(args, rank, lock, barrier):
                         precall_func=partition_data_manager.precall_func, callback_func=partition_data_manager.callback_func)
     num_labels = num_labels.item() 
     
-    partition_data_manager.features = sar.suffix_key_lookup(partition_data_manager.partition_data.node_features, 'feat').to(device)
+    partition_data_manager.features = sar.suffix_key_lookup(partition_data_manager.partition_data.node_features, 'features').to(device)
     
     gnn_model = GNNModel(partition_data_manager.features.size(1),
                          args.hidden_layer_dim,
