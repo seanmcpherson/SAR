@@ -787,18 +787,18 @@ class MemoryTracker:
     "pre-pause" - list for tracking memory usage right before dumping data to disk
     "post-pause" - list for tracking memory usage right after dumping data to disk
     "pre-resume" - list for tracking memory usage right before loading data from disk
-    "pre-resume" - list for tracking memory usage right after loading data from disk
+    "post-resume" - list for tracking memory usage right after loading data from disk
     
     """
     def __init__(self):
-        self.p = psutil.Process()
+        self.my_process = psutil.Process()
         self.metric_dict = {'pre-pause': list(), 
                             'post-pause': list(),
                             'pre-resume': list(), 
                             'post-resume': list()}
     
     def measure_memory(self, key):
-        self.metric_dict[key].append(self.p.memory_full_info().uss)
+        self.metric_dict[key].append(self.my_process.memory_full_info().uss)
     
     def print_metrics(self):
         print(f"Metrics for rank: {rank()} - pid: {os.getpid()} - parent-pid: {os.getppid()}")
