@@ -29,6 +29,7 @@ import inspect
 import os, gc, sys
 import itertools
 import logging
+import humanfriendly
 from collections.abc import MutableMapping
 from contextlib import contextmanager
 import torch
@@ -810,15 +811,11 @@ class MemoryTracker:
 
         avg_diff = sum([post - pre for pre, post in zip(self.metric_dict['pre-resume'], self.metric_dict['post-resume'])])/len(self.metric_dict['pre-resume'])
         logger.info("Avg. Memory Diff pre/post resume: {}".format(self.bytes2human(avg_diff)))
-    
+
     @staticmethod
-    def bytes2human(n):
-        symbols = ('K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y')
-        prefix = {}
-        for i, s in enumerate(symbols):
-            prefix[s] = 1 << (i + 1) * 10
-        for s in reversed(symbols):
-            if abs(n) >= prefix[s]:
-                value = float(n) / prefix[s]
-                return '%.1f%s' % (value, s)
-        return "%sB" % n
+    def bytes2human(bytes):
+        minus = True if bytes < 0 else False
+        converted = humanfriendly.format_size(abs(bytes))
+        if minus:
+            return f"-{converted}"
+        return converted
