@@ -39,7 +39,7 @@ from .tensor_utils import PointerTensor
 
 
 __all__ = ['initialize_comms', 'rank', 'world_size', 'nfs_ip_init',
-           'comm_device', 'DistributedBN1D',
+           'comm_device', 'DistributedBN1D', 'PartitionDataManager'
            'construct_mfgs', 'construct_full_graph', 'convert_dist_graph', 'GraphShardManager',
            'load_dgl_partition_data', 'suffix_key_lookup', 'Config', 'edge_softmax',
            'message_has_parameters', 'DistributedBlock', 'DistNeighborSampler', 'DataLoader',

@@ -27,6 +27,7 @@ in a single worker)
 from typing import Tuple, Dict, List,  Optional
 import inspect
 import os, gc, sys
+from multiprocessing import Lock
 import itertools
 import logging
 from collections.abc import MutableMapping
@@ -46,6 +47,7 @@ from ..common_tuples import ShardEdgesAndFeatures, AggregationData, TensorPlace,
 from ..comm import exchange_tensors,  rank, all_reduce
 from .sar_aggregation import sar_op
 from .full_partition_block import DistributedBlock
+from sar.data_loading import PartitionDataManager
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -199,11 +201,15 @@ class GraphShardManager:
     :type local_src_seeds: torch.Tensor
     :param local_tgt_seeds: The node indices of the output nodes relative to the starting node index of the local partition
     :type local_tgt_seeds: torch.Tensor
+    :param partition_data_manager: object used to manage saving and loading files from disk
+    :type partition_data_manager: PartitionDataManager
+    :param lock: It is used to synchronize processes. At one time, only one of them can keep its data in main memory
+    :type lock: Lock
 
     """
 
     def __init__(self, graph_shards: List[GraphShard], local_src_seeds: Tensor, local_tgt_seeds: Tensor, 
-                 partition_data_manager=None, lock = None) -> None:
+                 partition_data_manager: PartitionDataManager=None, lock: Lock = None) -> None:
         super().__init__()
         self.graph_shards = graph_shards
         self.pointer_list = []

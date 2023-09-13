@@ -6,7 +6,7 @@ SAR's communication routines
 =============================
 SAR uses only two types of collective communication calls: ``all_to_all`` and ``all_reduce``. This choice was made to improve scalability by avoiding any point-to-point communication. SAR supports four backends, which are ``ccl``, ``nccl``, ``mpi`` and ``gloo``. (Note: Using ``gloo`` backend may not be as optimal as using other backends, because it doesn't support ``all_to_all`` routine - SAR must use its own implementation, which uses multiple asynchronous sends (torch.dist.isend) between workers). Nvidia's ``nccl`` is already included in the PyTorch distribution and it is the natural choice when training on GPUs.
 
-The ``ccl`` backend uses `Intel's OneCCL <https://www.intel.com/content/www/us/en/developer/tools/oneapi/oneccl.html>`_ library. You can install the PyTorch bindings for OneCCL `here <https://github.com/intel/torch-ccl>`_ .  ``ccl`` is the preferred backend when training on CPUs.
+The ``ccl`` backend uses `Intel's OneCCL <https://www.intel.com/content/www/us/en/developer/tools/oneapi/oneccl.html>`_ library. You can install the PyTorch bindings for OneCCL `here <https://github.com/intel/torch-ccl>`_.  ``ccl`` is the preferred backend when training on CPUs.
 
 You can train on CPUs and still use the ``nccl`` backend, or you can train on GPUs and use the ``ccl`` backend. However, you will incur extra overhead to move tensors back and forth between the CPU and GPU in order to provide the right tensors to the communication backend.
 
@@ -21,12 +21,18 @@ In an environment with a networked file system, initializing ``torch.distributed
   sar.initialize_comms(rank, world_size, master_ip_address, backend_name, comm_device)
 
 ..
-:func:`sar.initialize_comms` tries to initialize the torch.distributed process group, but only if it has not been initialized. User can initialize process group on his own before calling :func:`sar.initialize_comms`.
+  
 :func:`sar.nfs_ip_init` communicates the master's ip address to the workers through the file system. In the absence of a networked file system, you should develop your own mechanism to communicate the master's ip address.
 
-You can specify the name of the socket that will be used for communication with `SAR_SOCKET_NAME` environment variable (if not specified, the first available socket will be selected).
+:func:`sar.initialize_comms` tries to initialize the torch.distributed process group, but only if it has not been initialized. User can initialize process group on his own before calling :func:`sar.initialize_comms`. When running single-node training, :func:`sar.initialize_comms` must be passed two additional parameters. The first one is ``shared_file``, which specifies the path to the file for inter-process communication. The second one is ``barrier``, which is used for synchronizing processes.
+::
 
-      
+  sar.initialize_comms(rank, world_size, master_ip_address, backend_name, comm_device,
+                        shared_file=shared_file, barrier=barrier)
+
+..
+
+You can specify the name of the socket that will be used for communication with `SAR_SOCKET_NAME` environment variable (if not specified, the first available socket will be selected).
   
 Relevant methods
 ---------------------------------------------------------------------------
