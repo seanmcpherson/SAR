@@ -167,7 +167,6 @@ def run(args, rank, lock, barrier):
     num_labels = partition_data_manager.labels.max() + 1
     sar.comm.all_reduce(num_labels, dist.ReduceOp.MAX, move_to_comm_device=True, 
                         precall_func=partition_data_manager.precall_func, callback_func=partition_data_manager.callback_func)
-    print("Node {} Num Labels {}".format(rank, num_labels))
     num_labels = num_labels.item() 
     
     partition_data_manager.features = sar.suffix_key_lookup(partition_data_manager.partition_data.node_features, 'features').to(device)
@@ -197,14 +196,12 @@ def run(args, rank, lock, barrier):
     
     optimizer = torch.optim.Adam(gnn_model.parameters(), lr=args.lr)
     for train_iter_idx in range(args.train_iters):
-        logger.debug(f'{rank} : starting training iteration {train_iter_idx}')
         partition_data_manager.features = sar.PointerTensor(partition_data_manager.features, 
                                                             pointer=full_graph_manager.pointer_list, 
                                                             linked=full_graph_manager.linked_list)
         # Train
         t_1 = time.time()
         logits = gnn_model(full_graph_manager, partition_data_manager.features)
-        logger.debug(f'{rank} : training iteration complete {train_iter_idx}')
         loss = F.cross_entropy(logits[partition_data_manager.masks['train_indices']],
                                partition_data_manager.labels[partition_data_manager.masks['train_indices']], reduction='sum')/n_train_points
 
@@ -252,7 +249,9 @@ def run(args, rank, lock, barrier):
         ])
         print(result_message, flush=True)
         
-        full_graph_manager.print_metrics()
+        # For tracking memory usage after/before saving and loading data from disk you need to set env variable 
+        if os.environ.get("SAR_SN_TRACK_MEMORY") is not None:
+            full_graph_manager.memory_tracker.print_metrics()
         
         # Clean files saved on disk during epoch
         partition_data_manager.remove_files()

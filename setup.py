@@ -7,7 +7,8 @@ setup(
         'dgl>=1.0.0',
         'numpy>=1.22.0',
         'torch>=1.10.0',
-        'ifaddr>=0.1.7'
+        'ifaddr>=0.1.7',
+        'humanfriendly>=10.0'
     ],
     packages=find_packages(),
     author='Hesham Mostafa',
