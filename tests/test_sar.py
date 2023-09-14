@@ -83,7 +83,6 @@ def test_sar_full_graph(world_size):
     Test is comparing mean of concatenated results from all processes
     with mean of native DGL full graph inference result.
     """
-    print(world_size)
     with tempfile.TemporaryDirectory() as tmpdir:
         manager = mp.Manager()
         mp_dict = manager.dict()
@@ -154,7 +153,6 @@ def test_convert_dist_graph():
             graph_name, part_config=part_file)
 
         sar_g = sar.convert_dist_graph(dist_g)
-        print(sar_g.graph_shards[0].graph.ndata)
         assert len(sar_g.graph_shards) == dist_g.get_partition_book().num_partitions()
         assert dist_g.num_edges() == sar_g.num_edges()
         # this check fails (1000 != 2000)

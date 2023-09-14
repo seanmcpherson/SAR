@@ -112,13 +112,13 @@ class PartitionDataManager:
             del self.features
         self.delete()
         self.lock.release()
-        print("Node {} Lock Released".format(self.idx))
+        logger.debug(f"Node {self.idx} Lock Released")
 
     def callback_func(self, handle):    
         if handle: 
             handle.wait()
         self.lock.acquire()
-        print("Node {} Lock Acquired".format(self.idx))
+        logger.debug(f"Node {self.idx} Lock Acquired")
         self.load()
         features = self.load_tensor('features')
         if features is not None:
@@ -139,7 +139,7 @@ class PartitionDataManager:
                 torch.save(self._partition_data, os.path.join(self.folder_name, "partition_data.pt"))
                 
         except Exception as e:
-            logger.debug("_pause_process Exception: {}".format(e))
+            logger.debug(f"_pause_process Exception: {e}")
             return False
         return True
 
@@ -164,17 +164,17 @@ class PartitionDataManager:
         if self.does_file_exist("masks.pt") is True:
             self._masks = torch.load(os.path.join(self.folder_name, "masks.pt"))
         else:
-            print("masks not loaded, no file saved")
+            logger.debug("masks not loaded, no file saved")
             
         if self.does_file_exist("labels.pt") is True:
             self._labels = torch.load(os.path.join(self.folder_name, "labels.pt"))
         else:
-            print("labels not loaded, no file saved")
+            logger.debug("labels not loaded, no file saved")
             
         if self.does_file_exist("partition_data.pt") is True:
             self._partition_data = torch.load(os.path.join(self.folder_name, "partition_data.pt"))
         else:
-            print("partition_data not loaded, no file saved")
+            logger.debug("partition_data not loaded, no file saved")
 
     def load_tensor(self, tensor_name):
         if not os.path.exists(self.folder_name):

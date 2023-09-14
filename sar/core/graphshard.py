@@ -40,7 +40,6 @@ import dgl.function as fn  # type: ignore
 from torch import Tensor
 import torch.distributed as dist
 
-#from memory_profiler import profile
 import psutil
 
 from ..common_tuples import ShardEdgesAndFeatures, AggregationData, TensorPlace, ShardInfo
@@ -316,14 +315,17 @@ class GraphShardManager:
 
     def get_lock(self):
         return self._lock
+    
     def set_lock(self, lock):
         self._lock = lock
+        
     def acquire_lock(self):
         self._lock.acquire()
-        logger.debug("Node {} Lock Acquired".format(rank()))
+        logger.debug(f"Node {rank()} Lock Acquired")
+        
     def release_lock(self):
         self._lock.release()
-        logger.debug("Node {} Lock Released".format(rank()))
+        logger.debug(f"Node {rank()} Lock Released")
     
     def _pause_process(self):
         if self.partition_data_manager:
@@ -354,37 +356,17 @@ class GraphShardManager:
                 del self.indices_required_from_me
             
             for idx, tens in enumerate(self.pointer_list):
-                #if idx >=4:
-                '''
-                import ipdb
-                _stdin = sys.stdin
-                try:
-                    sys.stdin = open('/dev/stdin')
-                    ipdb.set_trace()
-                finally:
-                    sys.stdin = _stdin
-                '''
                 try:
                     fname = "rank{}_tensor{}".format(rank(), idx)
                     if tens.requires_grad:
                         tens_d = tens.detach()
                         self.partition_data_manager.save_tensor(tens_d, fname)
-                        #with torch.no_grad():
-                        #    tens.set_()
                         tens.storage().resize_(0)
                     else:
                         self.partition_data_manager.save_tensor(tens, fname)
                         tens.resize_(0)
-                    
                 except Exception as e:
-                    # TODO check with tens error to here. 
-                    import ipdb
-                    _stdin = sys.stdin
-                    try:
-                        sys.stdin = open('/dev/stdin')
-                        ipdb.set_trace()
-                    finally:
-                        sys.stdin = _stdin
+                    logger.error(f"Exception during saving tensors: {e}")
             
             for _, linked_tens in self.linked_list:
                 try:
@@ -393,21 +375,14 @@ class GraphShardManager:
                     else:
                         linked_tens.resize_(0)
                 except Exception as e:
-                    # TODO check with tens error to here. 
-                    import ipdb
-                    _stdin = sys.stdin
-                    try:
-                        sys.stdin = open('/dev/stdin')
-                        ipdb.set_trace()
-                    finally:
-                        sys.stdin = _stdin
+                    logger.error(f"Exception during saving tensors: {e}")
+                    
         gc.collect()
         if os.environ.get("SAR_SN_TRACK_MEMORY") is not None:
             self.memory_tracker.measure_memory("post-pause")
         self.release_lock()
     
     def _resume_process(self, handle = None):
-        logger.debug("Node {} resume_process called".format(rank()))
         if handle:
             handle.wait()
         self.acquire_lock()
@@ -439,48 +414,23 @@ class GraphShardManager:
                 if indices_required_from_me is not None:
                     self.indices_required_from_me = indices_required_from_me
             except Exception as e: 
-                logger.debug("_resume_process Exception: {}".format(e))
+                logger.error(f"_resume_process Exception: {e}")
+                
             for idx, tens in enumerate(self.pointer_list):
                 fname = "rank{}_tensor{}".format(rank(), idx)
                 try:
                     tmp_tens = self.partition_data_manager.load_tensor(fname)
                     if tens.requires_grad:
                         import numpy as np
-                        #tens.storage().resize_(int(np.prod(tmp_tens.size())))
                         tens.storage().resize_(tmp_tens.numel())
-                        
-                        '''
-                        import ipdb
-                        _stdin = sys.stdin
-                        try:
-                            sys.stdin = open('/dev/stdin')
-                            ipdb.set_trace()
-                        finally:
-                            sys.stdin = _stdin
-                        '''
-                        #tens.set_(tmp_tens)
-                        #tens.data.copy_(tmp_tens.data)
-                        
                     else:
                         tens.resize_(tmp_tens.size())   
-                        #tens.data.copy_(tmp_tens.data)
-                        #tens.copy_(tmp_tens)
-                    #with torch.no_grad(): 
-                    #    tens.set_(tmp_tens)
-                    #tens.copy_(tmp_tens)
                     ref_tens = tens.new(0)
                     ref_tens.set_(tens)
                     ref_tens.copy_(tmp_tens)
-                    #tens[:] = tmp_tens
                 except Exception as e:
-                    logger.info("Exception: {}".format(e))
-                    import ipdb
-                    _stdin = sys.stdin
-                    try:
-                        sys.stdin = open('/dev/stdin')
-                        ipdb.set_trace()
-                    finally:
-                        sys.stdin = _stdin
+                    logger.error(f"Exception during loading tensors: {e}")
+                    
             for ref_tens, linked_tens in self.linked_list:
                 try:
                     if linked_tens.requires_grad:
@@ -490,11 +440,6 @@ class GraphShardManager:
 
                     if not(linked_tens.storage().data_ptr() == ref_tens.storage().data_ptr()):
                         raise ValueError("linked_tens and ref_tens data_ptr not equal")
-                    #with torch.no_grad():
-                    #    linked_tens.set_(ref_tens.storage(), 
-                    #                 storage_offset=linked_tens.storage_offset(), 
-                    #                 size=linked_tens.size(), 
-                    #                 stride=linked_tens.stride())
                 except Exception as e:
                     logger.error(f"Exception during loading tensors: {e}")
                     
