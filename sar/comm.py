@@ -578,17 +578,25 @@ class CommThread:
     '''
 
     def __init__(self) -> None:
+        self.is_initialized = False
+        
+    def initialize(self):
+        self.is_initialized = True
+        
         self.task_queue: queue.Queue = queue.Queue()
         self.result_queue: queue.Queue = queue.Queue()
 
         _comm_thread = threading.Thread(target=self._fetch_tasks)
         _comm_thread.daemon = True
         _comm_thread.start()
-
+        
     def submit_task(self, task_id: str, task: Callable[[], Any]) -> None:
         '''
         Submit a task in the form of a  callable with no arguments.
         '''
+        
+        if self.is_initialized == False:
+            self.initialize()
         logger.debug('task submitted %s', task_id)
         self.task_queue.put((task_id, task))
 
@@ -597,6 +605,8 @@ class CommThread:
         Reads the result queue and returns the result of the oldest
         executed task whose reult has not been read yet
         '''
+        if self.is_initialized == False:
+            self.initialize()
         t_1 = time.time()
         res = self.result_queue.get(block=block)
         logger.debug('task result retreival done in %s ', time.time() - t_1)
@@ -608,3 +618,6 @@ class CommThread:
             result = task()
             if result is not None:
                 self.result_queue.put(result)
+                
+
+comm_thread = CommThread()

@@ -46,7 +46,6 @@ def sar_process(mp_dict, rank, world_size, tmp_dir):
                              world_size,
                              master_ip_address,
                              'ccl')
-        sar.start_comm_thread()
 
         partition_data = sar.load_dgl_partition_data(
             part_file, rank, 'cpu')

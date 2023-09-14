@@ -32,7 +32,6 @@ def initialize_worker(rank, world_size, tmp_dir, backend="ccl", barrier=None):
         shard_file = os.path.join(tmp_dir, 'shared_file')
         sar.initialize_comms(rank, world_size, master_ip_address, backend, 
                              shared_file=shard_file, barrier=barrier)
-    sar.start_comm_thread()
 
 
 def get_random_graph():

@@ -116,7 +116,6 @@ def main():
     sar.initialize_comms(args.rank,
                          args.world_size, master_ip_address,
                          args.backend)
-    sar.start_comm_thread()
 
     # Load DGL partition data
     partition_data = sar.load_dgl_partition_data(
