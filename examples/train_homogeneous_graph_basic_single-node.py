@@ -250,7 +250,9 @@ def run(args, rank, lock, barrier):
         ])
         print(result_message, flush=True)
         
-        full_graph_manager.print_metrics()
+        # For tracking memory usage after/before saving and loading data from disk you need to set env variable 
+        if os.environ.get("SAR_SN_TRACK_MEMORY") is not None:
+            full_graph_manager.memory_tracker.print_metrics()
         
         # Clean files saved on disk during epoch
         partition_data_manager.remove_files()
