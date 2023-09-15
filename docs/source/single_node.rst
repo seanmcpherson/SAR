@@ -3,7 +3,7 @@
 
 Single-node training
 =======================
-Single-node training enables GNNs training on a very larg graphs on a single machine. This is achieved by running each worker as a separate process. At one time only one worker/process can store its data in a main memory (other processes keep their data saved on disk). SAR uses lock and a barrier for synchronizing processes. That is why you need to create them at the beginning of the program.
+Single-node training enables training GNNs on very large graphs on a single machine. This is achieved by running each worker as a separate process. At one time only one worker/process can store its data in a main memory (other processes keep their data saved on disk). SAR uses lock and a barrier for synchronizing processes. That is why you need to create them at the beginning of the program.
 
 ::
 
@@ -98,7 +98,7 @@ Simple training loop might look as follows:
 
 ..	
 
-SAR uses class named :class:`sar.PointerTensor`, which inherits from ``torch.Tensor`` in order to keep track of features and all of the tensors calculated during an epoch (mechanism needed to properly save every tensor on the disk). ``GraphShardManager`` stores those tensors in two lists called ``pointer_list`` and ``linked_list``. Both lists must be cleand at the end of each epoch.
+SAR uses class named :class:`sar.PointerTensor`, which inherits from ``torch.Tensor`` in order to keep track of features and all of the tensors calculated during an epoch (mechanism needed to properly save every tensor on the disk). ``GraphShardManager`` stores those tensors in two lists called ``pointer_list`` and ``linked_list``. Both lists must be cleaned at the end of each epoch.
 You should use :func:`remove_files` function of ``PartitionDataManager`` class to clear the disk from all of the saved files, at the end of each epoch.
 During single-node training every function performing collective communications must be passed ``precall_func`` and ``callback_func``, which are responsible for saving and loading data from disk. As you can see, since the ``GraphShardManager`` object is already created, script is using its :func:`pause_process` and :func:`resume_process` functions as precall_func and callback_func.
 
