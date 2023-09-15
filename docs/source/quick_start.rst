@@ -150,7 +150,7 @@ We use :class:`sar.DistNeighborSampler` to construct a distributed sampler and :
 
 Single-node training
 ---------------------------------------------------------------------------
-Single-node training enables GNNs training on a very larg graphs on a single machine. This is achieved by running each worker as a separate process. At one time only one worker/process can store its data in a main memory (other processes keep their data saved on disk). SAR uses locks and barriers for synchronizing processes (only one process can aquire lock at a given time). When a process triggers a collective communication call, it sends the data to other processes using torch.distributed file based communication, saves its data to the disk and releases a lock. Then, the next process can load its part of the data from disk and continue its work.
+Single-node training enables training GNNs on very large graphs on a single machine. This is achieved by running each worker as a separate process. At one time only one worker/process can store its data in a main memory (other processes keep their data saved on disk). SAR uses locks and barriers for synchronizing processes (only one process can aquire lock at a given time). When a process triggers a collective communication call, it sends the data to other processes using torch.distributed file based communication, saves its data to the disk and releases a lock. Then, the next process can load its part of the data from disk and continue its work.
 
 In order to construct ``GraphShardManager`` object during single-node training user is additionally required to prepare ``PartitionDataManager`` object. This object is needed to manage saving and loading data from disk by each process. You can read the :ref:`constructing distributed graphs for single-node training <single-node-training-graph-construction>` section for a detailed explenation of how to construct ``PartitionDataManager`` and ``GraphShardManager`` objects.
 Assuming you created ``GraphShardManager`` and ``PartitionDataManager`` objects, a simple training loop might look as follows:
@@ -182,7 +182,7 @@ Assuming you created ``GraphShardManager`` and ``PartitionDataManager`` objects,
 
 ..	
 
-SAR uses class named :class:`sar.PointerTensor`, which inherits from ``torch.Tensor`` in order to keep track of features and all of the tensors calculated during an epoch (mechanism needed to properly save every tensor on the disk). ``GraphShardManager`` stores those tensors in two lists called ``pointer_list`` and ``linked_list``. Both lists must be cleand at the end of the epoch.
+SAR uses class named :class:`sar.PointerTensor`, which inherits from ``torch.Tensor`` in order to keep track of features and all of the tensors calculated during an epoch (mechanism needed to properly save every tensor on the disk). ``GraphShardManager`` stores those tensors in two lists called ``pointer_list`` and ``linked_list``. Both lists must be cleaned at the end of the epoch.
 You should use :func:`remove_files` function of ``PartitionDataManager`` class to clear the disk from all of the saved files, at the end of the epoch.
 During single-node training every function performing collective communications must be passed ``precall_func`` and ``callback_func``, which are responsible for saving and loading data from disk.
 
