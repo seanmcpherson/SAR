@@ -102,12 +102,14 @@ For sampling-based training, use the dataloader provided by SAR: :func:`sar.Data
 
    for blocks in dataloader:
         output = gnn_model(blocks)
-	...
+	    # ...
 
 ..
 
 
-Full-graph inference
+.. _inference-sar-train-distdgl:
+
+Full-graph inference with SAR and mini-batch training with DistDGL
 ---------------------------------------------------------------------------------------
 SAR might also be utilized just for model evaluation. It is preferable to evaluate the model on the entire graph while performing mini-batch distributed training with the DGL package. To accomplish this, SAR can turn a `DistGraph <https://docs.dgl.ai/api/python/dgl.distributed.html#dgl.distributed.DistGraph>`_ object into a GraphShardManager object, allowing for distributed full-graph inference. The procedure is simple since no further steps are required because the model parameters are already synchronized during inference. You can use :func:`sar.convert_dist_graph` in the following way to perform full-graph inference:
 ::
@@ -142,6 +144,71 @@ SAR might also be utilized just for model evaluation. It is preferable to evalua
 
     # Access to model through DistributedDataParallel module field
     model_out = gnn_model.module.full_graph_inference(gsm, local_node_features)
+
+..
+
+
+.. _single-node-training-graph-construction:
+
+Single-node training
+---------------------------------------------------------------------------------------
+For single-node training, firstly create object of type :class:`sar.PartitionDataManager` in each worker
+::
+
+    partition_data_manager = sar.PartitionDataManager(rank, lock)
+
+..
+
+The ``PartitionDataManager`` object is used to manage saving and loading files from disk. Initialize it with node's rank and lock (``multiprocessing.Lock``) object used to synchronize processes. It takes care of saving and loading from disk following files:
+
+- partition data (created with :func:`sar.load_dgl_partition_data`)
+- train, validation, and test masks
+- labels
+- features and tensors used during training 
+
+You need to explicilty assign above values to the ``PartitionDataManager`` object
+::
+
+    # Specify partition_data
+    partition_data_manager.partition_data = sar.load_dgl_partition_data(json_file, rank, device)
+
+    # Specify train, validation, and test masks
+    partition_data_manager.masks = {}
+    for mask_name, indices_name in zip(['train_mask', 'val_mask', 'test_mask'],
+                                       ['train_indices', 'val_indices', 'test_indices']):
+        boolean_mask = sar.suffix_key_lookup(partition_data_manager.partition_data.node_features,
+                                             mask_name)
+        partition_data_manager.masks[indices_name] = boolean_mask.nonzero(
+            as_tuple=False).view(-1).to(device)
+
+    # Specyfy labels
+    partition_data_manager.labels = sar.suffix_key_lookup(
+                                        partition_data_manager.partition_data.node_features,
+                                        'labels').long().to(device)
+
+    # Specyfy features
+    partition_data_manager.features = sar.suffix_key_lookup(
+                                        partition_data_manager.partition_data.node_features,
+                                        'features').to(device)
+    # ...
+    # Creating model
+    # Synchronizing model's parameters
+    # etc.
+
+    full_graph_manager = sar.construct_full_graph(partition_data_manager.partition_data, 
+                                                  partition_data_manager=partition_data_manager, 
+                                                  lock=lock).to(device)
+
+..
+
+Constructing ``GraphShardManager`` object in single-node training is similar to creating it during full-batch training. Besides ``PartitionData`` object, you also need to pass an object of ``PartitionDataManager`` class, and a lock (``multiprocessing.Lock``) object used to synchronize processes
+
+
+Such created ``GraphShardManager`` object can be easily used as a drop-in replacement for DGL’s native graph object
+::
+
+    logits = gnn_model(full_graph_manager, partition_data_manager.features)
+
 ..
 
 
@@ -162,3 +229,5 @@ Relevant methods
    convert_dist_graph
    DataLoader
    DistNeighborSampler
+   PartitionDataManager
+   suffix_key_lookup

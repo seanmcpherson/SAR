@@ -55,7 +55,7 @@ Initialize communication
 ----------------------------------
 SAR uses the `torch.distributed <https://pytorch.org/docs/stable/distributed.html>`_ package to handle all communication. See the :ref:`Communication Guide <comm-guide>`  for more information on the communication routines. We require the IP address of the master worker/machine (the machine with rank 0) to initialize the ``torch.distributed`` package. In an environment with a networked file system where all workers/machines share a common file system, we can communicate the master's IP address through the file system. In that case, use :func:`sar.nfs_ip_init` to obtain the master ip address.
 
-Initialize the communication through a call to :func:`sar.initialize_comms` , specifying the current worker index, the total number of workers (which should be the same as the number of partitions from step 1), the master's IP address, and the communication device. The later is the device on which SAR should place the tensors before sending them through the communication backend.   For example: ::
+Initialize the communication through a call to :func:`sar.initialize_comms` , specifying the current worker index, the total number of workers (which should be the same as the number of partitions from step 1), the master's IP address, and the communication device. The latter is the device on which SAR should place the tensors before sending them through the communication backend.   For example: ::
 
   if backend_name == 'nccl':
       comm_device = torch.device('cuda')
@@ -67,6 +67,14 @@ Initialize the communication through a call to :func:`sar.initialize_comms` , sp
 .. 
 
 ``backend_name`` can be ``ccl``, ``nccl``, ``mpi`` or ``gloo``.
+
+When running single-node training :func:`sar.initialize_comms` must be passed two additional parameters. The first one is ``shared_file``, which specifies the path to the file for inter-process communication. The second one is ``barrier``, which is used for synchronizing processes.
+::
+
+  sar.initialize_comms(rank, world_size, master_ip_address, backend_name, comm_device,
+                        shared_file=shared_file, barrier=barrier)
+
+..
 
 
 
@@ -140,4 +148,45 @@ A simple sampling-based training loop looks as follows:
 We use :class:`sar.DistNeighborSampler` to construct a distributed sampler and :func:`sar.DataLoader` to construct an iterator that retrurn standard local DGL blocks constructed from the distributed graph.  
 
 
-For complete examples, check the examples folder in the Git repository.
+Single-node training
+---------------------------------------------------------------------------
+Single-node training enables training GNNs on very large graphs on a single machine. This is achieved by running each worker as a separate process. At one time only one worker/process can store its data in a main memory (other processes keep their data saved on disk). SAR uses locks and barriers for synchronizing processes (only one process can aquire lock at a given time). When a process triggers a collective communication call, it sends the data to other processes using torch.distributed file based communication, saves its data to the disk and releases a lock. Then, the next process can load its part of the data from disk and continue its work.
+
+In order to construct ``GraphShardManager`` object during single-node training user is additionally required to prepare ``PartitionDataManager`` object. This object is needed to manage saving and loading data from disk by each process. You can read the :ref:`constructing distributed graphs for single-node training <single-node-training-graph-construction>` section for a detailed explenation of how to construct ``PartitionDataManager`` and ``GraphShardManager`` objects.
+Assuming you created ``GraphShardManager`` and ``PartitionDataManager`` objects, a simple training loop might look as follows:
+
+::
+
+   for epoch in range(num_epochs):
+        partition_data_manager.features = sar.PointerTensor(partition_data_manager.features, 
+                                                            pointer=full_graph_manager.pointer_list, 
+                                                            linked=full_graph_manager.linked_list)
+
+        logits = gnn_model(full_graph_manager, partition_data_manager.features)
+        loss = F.cross_entropy(logits[partition_data_manager.masks['train_indices']],
+                               partition_data_manager.labels[partition_data_manager.masks['train_indices']], reduction='sum')/n_train_points
+
+        optimizer.zero_grad()
+        loss.backward()
+        sar.gather_grads(gnn_model, 
+                         precall_func=full_graph_manager.pause_process,
+                         callback_func=full_graph_manager.resume_process)
+        optimizer.step()
+
+        logits = torch.Tensor(logits)
+        partition_data_manager.features = torch.Tensor(partition_data_manager.features)
+        full_graph_manager.pointer_list = []
+        full_graph_manager.linked_list = []
+
+        partition_data_manager.remove_files()
+
+..	
+
+SAR uses class named :class:`sar.PointerTensor`, which inherits from ``torch.Tensor`` in order to keep track of features and all of the tensors calculated during an epoch (mechanism needed to properly save every tensor on the disk). ``GraphShardManager`` stores those tensors in two lists called ``pointer_list`` and ``linked_list``. Both lists must be cleaned at the end of the epoch.
+You should use :func:`remove_files` function of ``PartitionDataManager`` class to clear the disk from all of the saved files, at the end of the epoch.
+During single-node training every function performing collective communications must be passed ``precall_func`` and ``callback_func``, which are responsible for saving and loading data from disk.
+
+To learn more, read the :ref:`single-node training <single-node-training>` section.
+
+
+For complete examples, check the `examples folder <https://github.com/IntelLabs/SAR/tree/main/examples>`_ in the Git repository.

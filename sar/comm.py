@@ -134,7 +134,7 @@ def initialize_comms(_rank: int, _world_size: int, master_ip_address: str,
                      master_port_number: int = 12345, shared_file: str = None,
                      barrier: Barrier = None):
     """
-    Initialize Pytorch's communication library
+    Initialize Pytorch's communication library. During single-node training you need to specify shared_file and barrier, otherwise leave it as None. 
 
     :param _rank: Rank of the current worker
     :type _rank: int

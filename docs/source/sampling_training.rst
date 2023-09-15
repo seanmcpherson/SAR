@@ -27,7 +27,7 @@ In addition to distributed full-batch training, the SAR library also supports di
 		
 ..		
 
-Since :class:`sar.core.GraphShardManager` can be used as a drop-in replacement for DGL's native graph objects,  we can use a standard DGL model and either pass it the sampled ``DGLBlock``s or the full distributed graph.
+Since :class:`sar.core.GraphShardManager` can be used as a drop-in replacement for DGL's native graph objects,  we can use a standard DGL model and either pass it the sampled ``DGLBlock``\ s or the full distributed graph.
 
 As in full-batch training, we first load the DGL-generated partition data, and construct the full distributed graph. We then define the sampling strategy and dataloader. We use SAR's :class:`sar.DistNeighborSampler` and  :func:`sar.DataLoader` to define the sampling strategy and the distributed dataloader, respectively.
 
@@ -87,6 +87,8 @@ A typical training loop is shown below.
 
 Note that we obtain instances of standard ``DGLBlock`` from the distributed dataloader every training iteration. After every epoch, we run distributed full-graph inference using the :class:`sar.core.GraphShardManager`. We use the same ``GraphShardManager`` object at each layer. Alternatively, as described in the :ref:`data loading section<data-loading>`, we can construct layer-specific distributed message flow graphs (MFGs) to avoid computing redundant node features at each layer. Redundant node features are the node features that do not contribute to the output at the labeled nodes. 
 
+
+In addition, SAR supports converting `DistGraph <https://docs.dgl.ai/api/python/dgl.distributed.html#dgl.distributed.DistGraph>`_ object into a GraphShardManager object with  :func:`sar.convert_dist_graph` function. Thanks to this, user can perform mini-batch distributed training with DistDGL and use SAR to perform full-graph inference. See the :ref:`Full-graph inference with SAR and mini-batch training with DistDGL section<inference-sar-train-distdgl>` for more details.
 
 
 Relevant classes and methods
